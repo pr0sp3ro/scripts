@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+isinstalled at || exit
+
+echo 'notify-send "alarm!"' | at "$1"

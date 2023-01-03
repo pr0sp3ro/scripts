@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+notify-send "2 minute countdown started."
+sleep 2m
+notify-send "2 minutes have passed."

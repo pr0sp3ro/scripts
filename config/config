@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC2034
+
+DMENU="dmenu"
+DMENU_V="dmenu -l 25 -fn Monospace-11"
+
+isinstalled dmenu dust dunst libnotify || exit
+
+run_dust() { dust -br -d 0 "$@"; }
+runDust() { dust -br -d 0 "$@"; }
+
+echoRed() { [ "$1" == "-n" ] && echo -e "\n\e[1;31m${*:2}" "\e[0m" || echo -e "\e[1;31m$*" "\e[0m"; }
+echoRedExit() { echo -e "\e[1;31m$*" "\e[0m" exit 1; }
+echoBlue() { [ "$1" == "-n" ] && echo -e "\n\e[1;34m${*:2}" "\e[0m" || echo -e "\e[1;34m$*" "\e[0m"; }
+echoGreen() { [ "$1" == "-n" ] && echo -e "\n\e[1;32m${*:2}" "\e[0m" || echo -e "\e[1;32m$*" "\e[0m"; }

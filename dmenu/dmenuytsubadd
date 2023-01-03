@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+
+source config
+isinstalled xclip || exit
+
+ytSubsDir="$XDG_DOCUMENTS_DIR/ytsubs"
+ytSubsFile="$ytSubsDir/$(echo "$(ls $ytSubsDir)" | $DMENU_V -i -p "Where should a new subscription be saved?")" || exit 1
+
+channelLink="$(xclip -o)"
+channelName="$($DMENU -p "Channel name:")" || exit 1
+  
+notify-send "Channel has been added to $ytSubsFile file." "$channelLink"
+echo "$channelName -- $channelLink" >> "$ytSubsFile"

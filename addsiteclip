@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+site="$(xclip -o)"
+file="$HOME/doc/bookmarks/sites.md"
+
+if grep -q "^$site$" "$file"; then
+  notify-send "Site already exists."
+else
+  notify-send "Site has been added." "$site"
+  echo "$site" >> "$file"
+fi
