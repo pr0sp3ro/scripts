@@ -4,6 +4,6 @@ isinstalled xwallpaper || exit
 
 bgsLocation="$HOME/img/background"
 
-[[ -z $1 ]] && echo "Image not selected."
+[ -z "$1" ] && echo "Image not selected."
 cp "$1" "$bgsLocation"
 xwallpaper --zoom "$bgsLocation"

@@ -1,2 +1,2 @@
 # scripts
-a handful of bash scripts which are useful in my workflow
+a handful of bash scripts which are useful for my workflow

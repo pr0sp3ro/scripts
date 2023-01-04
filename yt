@@ -3,26 +3,14 @@
 isinstalled youtube-dl
 
 usage() {
-    echo -e "Options: \nvid \nsong \nsong-np to download one song instead of entire playlist"
+    echo -e "Options: \n- vid \n- song \n- song-np to download one song instead of entire playlist"
     exit 1
 }
 
-dlVideo() {
-    youtube-dl -i -x -f bestaudio/best "$1"
-}
-
-dlSong() {
-    youtube-dl -i -x --audio-format mp3 "$1"
-}
-
-dlSongNp() {
-    youtube-dl -i -x --audio-format mp3 "$1" --no-playlist
-}
-
 case "$1" in
-    vid) dlVideo "$1" ;;
-    song) dlSong "$1" ;;
-    songNp) dlSongNp "$1" ;;
+    vid) youtube-dl -i -x -f bestaudio/best "$2" ;;
+    song) youtube-dl -i -x --audio-format mp3 "$2" ;;
+    songNp) youtube-dl -i -x --audio-format mp3 "$2" --no-playlist ;;
     *) usage
     ;;
 esac
