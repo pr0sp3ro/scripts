@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+isinstalled xclip || exit
+
 site="$(xclip -o)"
 file="$HOME/doc/bookmarks/sites.md"
 

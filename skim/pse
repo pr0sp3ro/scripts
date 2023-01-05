@@ -6,11 +6,11 @@
 isinstalled fd skim || exit
 
 case "$1" in
-    "g") dir="$HOME/.local/git" ;;
-    "s") dir="$HOME/.local/src" ;;
-    "st") dir="$HOME/tmp/src" ;;
+    "git") dir="$HOME/.local/git" ;;
+    "src") dir="$HOME/.local/src" ;;
+    "tsrc") dir="$HOME/tmp/src" ;;
     *) exit 1 ;;
 esac
 
 export SKIM_DEFAULT_COMMAND='fd -d 1 --type directory -E node_modules'
-cd "$dir" && cd "$(sk --reverse)" && nvim
+cd "$dir" && cd "$(sk --reverse)" || exit 1
