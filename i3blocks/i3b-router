@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+isinstalled router.py || exit
+
+lvl="$(router.py)"
+
+[ "$lvl" -le 30 ] && notify-send -u critical "Router low battery!" "$lvl%" && echo "R: (L) $lvl"
+[ "$lvl" -gt 30 ] && echo "R: $lvl"

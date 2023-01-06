@@ -1,7 +1,5 @@
 priv/
 pass/
-awesomebar/
-i3blocks/
 dev/
 backup/backupexport
 backup/backupcheck
