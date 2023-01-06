@@ -1,5 +1,9 @@
-priv
-pass
-awesomebar
-i3blocks
-dev
+priv/
+pass/
+awesomebar/
+i3blocks/
+dev/
+backup/backupexport
+backup/backupcheck
+hacks/
+translate/
