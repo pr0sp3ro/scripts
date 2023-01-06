@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+
+source config
+isinstalled setxkbmap xset xinput xmodmap || exit
+
+[ "$1" == "dmenu" ] && keyboardLayout="$(printf "us\\npl" | $DMENU -i -p "Choose a keyboard layout:")"
+[ "$1" == "us" ] && keyboardLayout="us"
+[ "$1" == "pl" ] && keyboardLayout="pl"
+
+remap() {
+    setxkbmap
+    setxkbmap -option caps:escape
+    xset r rate 320 70
+    xmodmap -e 'keycode 135 = Super_R'
+    xinput --set-prop "Kingsis Corporation ZOWIE Gaming mouse" "libinput Accel Speed" "-1"
+    xinput --set-prop "Logitech Wireless Mouse" "libinput Accel Speed" "-1"
+    xinput --set-prop "ELAN0501:01 04F3:3060 Touchpad" "libinput Tapping Enabled" "1"
+    xinput --set-prop "ELAN0501:01 04F3:3060 Touchpad" "libinput Natural Scrolling Enabled" "1"
+} 
+
+if [ "$keyboardLayout" == "us" ]; then
+    remap
+    setxkbmap us
+    xmodmap -e 'clear mod1'
+    xmodmap -e 'add mod1 = Alt_L'
+    xmodmap -e 'add mod4 = Alt_R'
+    notify-send "Remap completed."
+elif [ "$keyboardLayout" == "pl" ]; then
+    remap
+    setxkbmap pl
+    notify-send "Remap completed."
+fi

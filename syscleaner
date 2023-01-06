@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+cp -r "$XDG_CACHE_HOME/keepassxc" "$HOME"
+rm -rf "${XDG_CACHE_HOME:?}/"*
+mv "$HOME/keepassxc" "$XDG_CACHE_HOME"
+sudo pacman -Sc
+paru -Sc

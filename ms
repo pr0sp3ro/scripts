@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# make script
+
 file="$1"
 touch "$file"
 echo -e "#!/usr/bin/env bash\n" >> "$file"
