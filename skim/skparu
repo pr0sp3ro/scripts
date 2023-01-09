@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-isinstalled paru skim || exit 1
+isinstalled paru skim || exit
 
 export SKIM_DEFAULT_OPTIONS=""
 

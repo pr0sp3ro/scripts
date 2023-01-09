@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-isinstalled skim || exit 1
+isinstalled skim || exit
 
 pacman -Slq |
     sk -m --preview "cat <(pacman -Si {1}) <(pacman -Fl {1} | awk \"{print \$2}\")" |

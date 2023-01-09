@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-isinstalled skim || exit 1
+isinstalled skim || exit
 
 scriptsDir="$HOME/.local/sc"
 
