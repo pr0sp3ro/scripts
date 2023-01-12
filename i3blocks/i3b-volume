@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-[ "$(pamixer --get-mute)" = true ] && echo "V: (X)" && exit
+[ "$(pamixer --get-mute)" = true ] && echo "V: Muted" && exit
 vol="$(pamixer --get-volume)"
-echo "V: $vol"
+echo "V: $vol%"

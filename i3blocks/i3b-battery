@@ -12,6 +12,6 @@ esac
 
 capacity=$(cat "$battery/capacity")
 
-[ "$capacity" -le 20 ] && warn="(X) " && notify-send -u critical "Low battery!" "$capacity"
+[ "$capacity" -le 20 ] && warn="(!) " && notify-send -u critical "Low battery!" "$capacity"
 
-echo "B: $status $warn$capacity"; unset warn
+echo "B: $status $warn$capacity%"; unset warn
