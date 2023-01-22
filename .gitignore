@@ -1,6 +1,6 @@
 priv/
 pass/
 dev/
-backup/backupexport
-backup/backupcheck
+backup/exportetc
+backup/backuptest
 hacks/

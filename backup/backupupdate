@@ -51,7 +51,7 @@ imgBackup () {
     file "$mntVCBackup/img.tar.gz"
 }
 
-VCMount () {
+vcMount () {
     [ ! -f "$mntVCBackup/donotdelete" ] && sudo veracrypt --display-password \
         -t \
         --pim=0 -k "" \
@@ -61,10 +61,10 @@ VCMount () {
 
 case "$1" in
   "standard")
-      VCMount
+      vcMount
       standardBackup ;;
   "img") 
-      VCMount
+      vcMount
       imgBackup ;;
   *) usage ;;
 esac
