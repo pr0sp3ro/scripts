@@ -14,8 +14,8 @@ exportData(){
     [ ! -f "$backupLocalVolume" ] && echoRedExit "$backupLocalVolume does not exist."
     [ ! -f "$mountedDevice/backup" ] && echoRedExit "$mountedDevice is probably not mounted."
 
-    if ! ls "$mntVcBackupDir" 1> /dev/null 2>&1; then echoBlue "Unmounting VeraCrypt volume."; else sudo veracrypt -d "$mntVcBackupDir"; fi
-    if ! ls "$mntVcBackupDir" 1> /dev/null 2>&1; then echoRedExit "Error. $mntVcBackupDir is still mounted."; fi
+    if ls "$mntVcBackupDir"/* 1> /dev/null 2>&1; then echoBlue "Unmounting VeraCrypt volume." && sudo veracrypt -d "$mntVcBackupDir"; fi
+    if ls "$mntVcBackupDir"/* 1> /dev/null 2>&1; then echoRedExit "Error. $mntVcBackupDir is still mounted."; fi
 
     echoBlue "Replacing old backup file."
     mv -v "$mountedDevice/backup" "$mountedDevice/backup-old"
