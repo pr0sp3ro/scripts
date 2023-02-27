@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+
+source config
+isinstalled xdotool || exit
+
+xdotool type "$( cat "$HOME/doc/polskie-znaki.txt" | $DMENU_V -i | awk '{print $2}' )"
