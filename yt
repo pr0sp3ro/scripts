@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-isinstalled youtube-dl
+isinstalled yt-dlp
 
 usage() {
     echo -e "Options: \n- vid \n- song \n- song-np to download one song instead of entire playlist"
@@ -8,9 +8,9 @@ usage() {
 }
 
 case "$1" in
-    vid) youtube-dl -i -x -f bestaudio/best "$2" ;;
-    song) youtube-dl -i -x --audio-format mp3 "$2" ;;
-    songNp) youtube-dl -i -x --audio-format mp3 "$2" --no-playlist ;;
+    vid) yt-dlp -i -x -f bestaudio/best "$2" ;;
+    song) yt-dlp -i -x --audio-format mp3 "$2" ;;
+    songNp) yt-dlp -i -x --audio-format mp3 "$2" --no-playlist ;;
     *) usage
     ;;
 esac

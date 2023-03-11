@@ -29,5 +29,5 @@ exportData(){
     echoBlue -n "Run backuptest script to perform tests."
 }
 
-[ -z "$1" ] && echoBlue "Usage: $0 <mounted directory>"
+[ -z "$1" ] && echoBlue "Usage: $0 <mounted directory>" && exit 1
 exportData "$1"
