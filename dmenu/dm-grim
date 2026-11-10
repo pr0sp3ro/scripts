@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+
+source _scripts_config
+isinstalled grim slurp wl-copy notify-send swappy || exit
+
+shots_dir="$HOME/img/grim"
+if [ ! -d "$shots_dir" ]; then
+    mkdir -p "$shots_dir"
+    notify-send "$0" "$shots_dir directory created."
+fi
+
+filename="$shots_dir/$(date "+%d-%B-%A-%H-%M-%S").png"
+
+grim_cmd() {
+    if [ -n "${DM_GRIM_SCALE:-}" ]; then
+        /usr/bin/grim -s "$DM_GRIM_SCALE" "$@"
+    else
+        /usr/bin/grim "$@"
+    fi
+}
+
+save_selected() {
+    local geometry
+    geometry="$(slurp)" || exit 1
+    grim_cmd -g "$geometry" "$filename"
+    notify-send "Image saved"
+}
+
+copy_selected() {
+    local geometry
+    local tmp_file
+    geometry="$(slurp)" || exit 1
+    tmp_file="$(mktemp --suffix=.png)" || exit 1
+    grim_cmd -g "$geometry" -t png "$tmp_file"
+    wl-copy -t image/png < "$tmp_file"
+    rm -f "$tmp_file"
+    notify-send "Image copied to clipboard"
+}
+
+save_full() {
+    grim_cmd "$filename"
+    notify-send "Image saved"
+}
+
+copy_full() {
+    local tmp_file
+    tmp_file="$(mktemp --suffix=.png)" || exit 1
+    grim_cmd -t png "$tmp_file"
+    wl-copy -t image/png < "$tmp_file"
+    rm -f "$tmp_file"
+    notify-send "Image copied to clipboard"
+}
+
+swappy_selected() {
+    local geometry
+    geometry="$(slurp)" || exit 1
+    grim_cmd -g "$geometry" - | swappy -f - -o - | wl-copy -t image/png
+}
+
+case "$(printf "selected area (copy)\nselected area (swappy)\nselected area\nfull screen (copy)\nfull screen" | $DMENU_V -i -p "Screenshot which area?")" in
+    "selected area (copy)") copy_selected ;;
+    "full screen (copy)") copy_full ;;
+    "selected area") save_selected ;;
+    "full screen") save_full ;;
+    "selected area (swappy)") swappy_selected ;;
+esac

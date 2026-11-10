@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case "${1:-}" in
+    -h|--help)
+        cat <<'HELP'
+Usage: reboot-windows
+
+Set UEFI BootNext to the Windows Boot Manager entry and reboot.
+The firmware boots Windows once, skipping GRUB, then clears BootNext.
+HELP
+        exit 0
+        ;;
+esac
+
+entry=$(efibootmgr | /usr/bin/grep -m1 'Windows Boot Manager' | /usr/bin/sed -E 's/^Boot([0-9A-F]{4}).*/\1/')
+
+if [[ -z "$entry" ]]; then
+    echo "reboot-windows: no 'Windows Boot Manager' entry in efibootmgr" >&2
+    exit 1
+fi
+
+sudo efibootmgr --bootnext "$entry" >/dev/null
+systemctl reboot

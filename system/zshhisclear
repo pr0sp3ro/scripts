@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+history_dir="${XDG_STATE_HOME:-"$HOME/.local/state"}/zsh"
+history_file="$history_dir/history"
+
+mkdir -p "$history_dir"
+rm -f -- "$history_file"
+install -m 600 /dev/null "$history_file"
+
+echo "Created a new empty Zsh history file: $history_file"

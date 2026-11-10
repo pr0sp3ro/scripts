@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: fparu-update
+Choose one foreign package with an available update (paru -Qmu).
+Displays current and available versions, then asks before installing it.
+No selection or a negative answer leaves packages unchanged.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: fparu-update"
+fi
+
+isinstalled paru fzf || exit 1
+
+status=0
+packages=$(paru -Qmu) || status=$?
+
+if ! [[ $status -le 1 ]]; then
+    fail "Could not list package updates."
+fi
+
+if [[ -z $packages ]]; then
+    printf 'No foreign package updates available.\n'
+    exit 0
+fi
+
+if selected_update=$(
+    printf '%s\n' "$packages" |
+        fzf --height 20 --reverse --prompt='Update> ' \
+            --preview 'paru -Si -- {1}'
+); then
+    if [[ -z $selected_update ]]; then
+        exit 0
+    fi
+
+    package=${selected_update%% *}
+    printf 'Install update for %s? [y/N]: ' "$package"
+    read -r answer || exit 0
+
+    if ! [[ $answer == y || $answer == Y ]]; then
+        exit 0
+    fi
+
+    exec paru -S -- "$package"
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi

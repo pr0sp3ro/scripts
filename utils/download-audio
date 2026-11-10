@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: download-audio MODE [OPTIONS] URL
+       download-audio --help
+
+Download audio using yt-dlp. Supports YouTube and other yt-dlp sites.
+
+Modes:
+  audio  Extract the best available audio without forcing MP3 conversion.
+  mp3    Convert to MP3 with highest VBR quality (--audio-quality 0).
+         Conversion cannot improve the source quality.
+
+Options:
+  --playlist     Allow playlist downloads. Default: single video only.
+  --output DIR   Download into DIR. Default: current directory.
+  -h, --help     Show this help.
+  --             End option parsing.
+
+Requires yt-dlp, ffmpeg and ffprobe.
+Stops on download or conversion errors and returns the yt-dlp exit code.
+Existing yt-dlp configuration is loaded, with the options above overridden.
+Quote URLs containing shell characters such as &.
+
+Examples:
+  download-audio audio 'https://www.youtube.com/watch?v=VIDEO_ID'
+  download-audio mp3 'https://www.youtube.com/watch?v=VIDEO_ID'
+  download-audio mp3 --playlist 'https://www.youtube.com/playlist?list=PLAYLIST_ID'
+  download-audio mp3 --output ~/music 'https://www.youtube.com/watch?v=VIDEO_ID'
+EOF
+}
+
+if [[ $# -eq 0 || ${1:-} == --help || ${1:-} == -h ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+mode=$1
+shift
+
+case "$mode" in
+    audio|mp3) ;;
+    *) fail "Unknown mode: $mode. Run download-audio --help." ;;
+esac
+
+playlist=--no-playlist
+output=.
+urls=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) help; exit 0 ;;
+        --playlist) playlist=--yes-playlist; shift ;;
+        --output)
+            [[ $# -ge 2 && -n $2 ]] || fail "--output requires a directory."
+            output=$2
+            shift 2
+            ;;
+        --) shift; urls+=("$@"); break ;;
+        -*) fail "Unknown option: $1. Run download-audio --help." ;;
+        *) urls+=("$1"); shift ;;
+    esac
+done
+
+[[ ${#urls[@]} -eq 1 && -n ${urls[0]} ]] || fail "Provide exactly one nonempty URL."
+isinstalled yt-dlp ffmpeg ffprobe || exit 1
+
+options=(--no-ignore-errors --extract-audio --format bestaudio/best "$playlist" --paths "$output")
+
+if [[ $mode == mp3 ]]; then
+    options+=(--audio-format mp3 --audio-quality 0)
+else
+    options+=(--audio-format best)
+fi
+
+exec yt-dlp "${options[@]}" -- "${urls[0]}"

@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: fkill [--force]
+Choose current-user mode or sudo (all users), then select process names with fzf.
+The list shows PID and process name. killall targets all matching names, not just selected PIDs.
+Tab selects multiple names, Esc cancels.
+Choose sigterm (terminate) or sigkill (force kill), then confirm yes/no.
+Confirmation defaults to yes. Signals affect all matching processes in the chosen mode.
+Names longer than 15 characters are skipped if killall cannot match them exactly.
+--force: select one current-user process by PID and send SIGKILL without confirmation.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -gt 1 || ($# -eq 1 && $1 != --force) ]]; then
+    fail "Usage: fkill [--force]"
+fi
+
+if [[ ${1:-} == --force ]]; then
+    isinstalled ps fzf || exit 1
+    processes=$(ps -u "$UID" -o pid=,comm=)
+    [[ -n $processes ]] || exit 0
+
+    if selected=$(printf '%s\n' "$processes" | fzf --height=25 --no-multi --reverse --prompt='Kill> ' --header='SIGKILL to selected PID. Enter: kill, Esc: cancel.'); then
+        read -r pid name <<< "$selected"
+        [[ $pid =~ ^[0-9]+$ && $pid -gt 1 ]] || exit 0
+        kill -KILL -- "$pid"
+    else
+        status=$?
+
+        if [[ $status == 1 || $status == 130 ]]; then
+            exit 0
+        fi
+
+        fail "fzf failed with status $status."
+    fi
+
+    exit 0
+fi
+
+isinstalled ps sort fzf killall id || exit 1
+
+mode=$(printf 'current user\nsudo - all users\n' | fzf --height=25 --no-multi --no-sort --sync --reverse --prompt='Run as> ') || exit 0
+
+if [[ $mode == 'sudo - all users' ]]; then
+    isinstalled sudo || exit 1
+    processes=$(ps -e -o pid=,comm= | sort -k2)
+    command=(sudo killall)
+else
+    processes=$(ps -u "$UID" -o pid=,comm= | sort -k2)
+    command=(killall --user "$(id -un)")
+fi
+
+[[ -n $processes ]] || exit 0
+
+if selected=$(printf '%s\n' "$processes" | fzf --height=25 --multi --reverse --prompt='Kill> ' --header='Tab: select process names, Esc: cancel.'); then
+    [[ -n $selected ]] || exit 0
+    names=()
+
+    while read -r pid name; do
+        names+=("$name")
+    done <<< "$selected"
+
+    mapfile -t names < <(printf '%s\n' "${names[@]}" | sort -u)
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi
+
+signal=$(printf 'sigterm - terminate\nsigkill - force kill\n' | fzf --height=25 --no-multi --no-sort --reverse --prompt='Signal> ') || exit 0
+signal=${signal%% *}
+
+answer=$(printf 'yes\nno\n' | fzf --height=25 --no-multi --no-sort --sync --reverse --prompt='Confirm> ' --header="Mode: $mode. Send $signal to all matching processes named:
+$(printf '%s\n' "${names[@]}")") || exit 0
+[[ $answer == yes ]] || exit 0
+
+"${command[@]}" --exact --signal "${signal^^}" -- "${names[@]}"

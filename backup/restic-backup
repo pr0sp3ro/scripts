@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+shopt -s nullglob
+
+help() {
+    cat <<'HELP'
+Usage: restic-backup
+       restic-backup --help
+
+Back up ~/.ssh, ~/.gnupg, ~/doc, ~/shrd and ~/img to the restic repository
+at /mnt/backup/restic, then remove old snapshots and check part of the data.
+Includes Brave bookmarks, Firefox profiles.ini and Firefox bookmark backups.
+Firefox places.sqlite (bookmarks and history) is included only while
+Firefox is not running. Firefox is never closed.
+Generates the browser extension list before the backup.
+
+Mounts /mnt/backup through its /etc/fstab entry when it is not mounted
+and unmounts it afterwards. A disk that was already mounted stays mounted.
+Reads the repository password from ~/.config/restic/password.
+
+Keeps 7 daily, 4 weekly and 12 monthly snapshots per host.
+Checks a random 10% of the repository data on each run.
+Logs the filesystem label with [restic] to ~/shrd/doc/backup_dates.txt
+only after a complete backup. Exits with status 3 when the snapshot was
+created but some files could not be read. Only one instance may run.
+HELP
+}
+
+if [[ $# -eq 1 && ( $1 == --help || $1 == -h ) ]]; then
+    help
+    exit 0
+fi
+
+if [[ $# -ne 0 ]]; then
+    help >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+isinstalled restic mount umount mountpoint findmnt flock pgrep date browser-extensions || exit 1
+
+mount_dir=/mnt/backup
+log_file="$HOME/shrd/doc/backup_dates.txt"
+
+export RESTIC_REPOSITORY="$mount_dir/restic"
+export RESTIC_PASSWORD_FILE="$HOME/.config/restic/password"
+
+[[ -f $RESTIC_PASSWORD_FILE && -r $RESTIC_PASSWORD_FILE ]] || fail "=> Cannot read the password file: $RESTIC_PASSWORD_FILE"
+
+[[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR ]] || fail "=> XDG_RUNTIME_DIR is unavailable."
+exec 9> "$XDG_RUNTIME_DIR/restic-backup.lock"
+flock -n 9 || fail "=> A restic backup is already running."
+
+mounted_here=false
+
+unmount() {
+    if [[ $mounted_here == true ]]; then
+        umount -- "$mount_dir" || warn "=> Could not unmount $mount_dir."
+    fi
+}
+
+trap unmount EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if ! mountpoint -q -- "$mount_dir"; then
+    info "=> Mounting $mount_dir..."
+    mount -- "$mount_dir" || fail "=> Could not mount $mount_dir. Check that the disk is connected."
+    mounted_here=true
+fi
+
+[[ -f $RESTIC_REPOSITORY/config ]] || fail "=> No restic repository at $RESTIC_REPOSITORY."
+label=$(findmnt -rn --mountpoint "$mount_dir" -o LABEL) || label=
+
+sources=(
+    "$HOME/.ssh"
+    "$HOME/.gnupg"
+    "$HOME/doc"
+    "$HOME/shrd"
+    "$HOME/img"
+)
+
+for source in "${sources[@]}"; do
+    [[ -d $source && -r $source && -x $source ]] || fail "=> Required directory is not readable: $source"
+done
+
+brave_root="$HOME/.config/BraveSoftware/Brave-Browser"
+
+for profile in "$brave_root/Default" "$brave_root"/Profile\ *; do
+    for file in "$profile/Bookmarks" "$profile/Bookmarks.bak"; do
+        if [[ -f $file && -r $file ]]; then
+            sources+=("$file")
+        fi
+    done
+done
+
+firefox_running=false
+
+if pgrep -u "$UID" -x 'firefox|firefox-bin' >/dev/null; then
+    firefox_running=true
+    warn "=> Firefox is running. Skipping places.sqlite, bookmark backups are still included."
+fi
+
+for base in "$HOME/.config/mozilla/firefox" "$HOME/.mozilla/firefox"; do
+    [[ -f $base/profiles.ini ]] || continue
+    sources+=("$base/profiles.ini")
+
+    for profile in "$base"/*/; do
+        profile=${profile%/}
+
+        if [[ -d $profile/bookmarkbackups ]]; then
+            sources+=("$profile/bookmarkbackups")
+        fi
+
+        # Copying places.sqlite while Firefox writes to it can produce an inconsistent database.
+        [[ $firefox_running == false ]] || continue
+
+        for file in "$profile/places.sqlite" "$profile/places.sqlite-wal" "$profile/places.sqlite-shm"; do
+            if [[ -f $file ]]; then
+                sources+=("$file")
+            fi
+        done
+    done
+done
+
+browser-extensions
+
+info "=> Backing up to $RESTIC_REPOSITORY..."
+status=0
+
+# Group by host only, so snapshots with and without places.sqlite share
+# one parent chain and one retention policy.
+restic backup --group-by host -- "${sources[@]}" || status=$?
+
+if [[ $status -eq 3 ]]; then
+    warn "==> Some files could not be read. The snapshot is incomplete."
+elif [[ $status -ne 0 ]]; then
+    fail "=> Backup failed." "$status"
+fi
+
+info "=> Removing old snapshots..."
+restic forget \
+    --group-by host \
+    --keep-daily 7 \
+    --keep-weekly 4 \
+    --keep-monthly 12 \
+    --prune ||
+    fail "=> Removing old snapshots failed."
+
+info "=> Checking 10% of the repository data..."
+restic check --read-data-subset=10% || fail "=> Repository check failed."
+
+if [[ $status -ne 0 ]]; then
+    fail "=> Backup finished with unreadable files. Not logged to $log_file." "$status"
+fi
+
+printf '%s [restic] <=> %s\n' "${label:-$mount_dir}" "$(date '+%d %B %Y [%A] %H:%M')" >> "$log_file"
+success "=> Backup completed."

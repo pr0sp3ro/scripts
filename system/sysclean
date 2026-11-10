@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source _scripts_config
+isinstalled paru find || exit 1
+
+cache_dir="${XDG_CACHE_HOME:-"$HOME/.cache"}"
+
+paru -Sc --noconfirm
+
+# KeePassXC stores its recent databases and window state in the cache.
+find "$cache_dir" -mindepth 1 -maxdepth 1 ! -name keepassxc -exec rm -rf -- {} +
+
+echo
+ls --color=auto --group-directories-first -alh "$cache_dir"

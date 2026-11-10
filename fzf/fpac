@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: fpac
+Select repository packages to install with pacman. Tab selects multiple.
+Shows package information in the preview. Pacman asks for confirmation.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: fpac"
+fi
+
+isinstalled pacman sudo fzf sed tr awk sort || exit 1
+
+packages=$(
+    pacman -Slq |
+        sed 's/\x1b\[[0-9;]*[[:alpha:]]//g' |
+        tr -d '\000-\010\013\014\016-\037\177' |
+        awk '/^[[:alnum:]@._+-]+$/' |
+        sort -u
+)
+
+if [[ -z $packages ]]; then
+    exit 0
+fi
+
+if selected_packages=$(
+    printf '%s\n' "$packages" |
+        fzf --multi --reverse --prompt='Install> ' \
+            --preview 'pacman -Si -- {1}'
+); then
+    if [[ -z $selected_packages ]]; then
+        exit 0
+    fi
+
+    mapfile -t package_names <<< "$selected_packages"
+    printf 'Selected packages:\n%s\n' "$selected_packages"
+    exec sudo pacman -S -- "${package_names[@]}"
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi

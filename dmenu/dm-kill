@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'HELP'
+Usage: dm-kill [mnu options]
+Choose current-user mode or sudo (all users), then select a process name.
+Choose sigterm (terminate) or sigkill (force kill), then confirm yes/no.
+Confirmation defaults to yes. Esc cancels at every step.
+Signals affect all matching processes in the chosen mode.
+Names longer than 15 characters are skipped if killall cannot match them exactly.
+HELP
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+main() {
+    local mode processes selected signal answer entry valid=false
+    local -a command
+
+    isinstalled ps sort killall id || return 1
+    mode=$(printf 'current user\nsudo - all users\n' | $DMENU -p 'Run as:' "$@") || return 0
+
+    case "$mode" in
+        'current user')
+            processes=$(ps -u "$UID" -o comm= | sort -u)
+            command=(killall --user "$(id -un)")
+            ;;
+        'sudo - all users')
+            isinstalled sudo || return 1
+            export SUDO_ASKPASS="${SUDO_ASKPASS:-$SCRIPTS_DIR/dmenu/dm-pass}"
+            processes=$(ps -e -o comm= | sort -u)
+            command=(sudo -A killall)
+            ;;
+        *) return 0 ;;
+    esac
+
+    [[ -n $processes ]] || return 0
+    selected=$(printf '%s\n' "$processes" | $DMENU_V -i -p 'Kill:' "$@") || return 0
+
+    while IFS= read -r entry; do
+        if [[ $selected == "$entry" ]]; then
+            valid=true
+            break
+        fi
+    done <<< "$processes"
+
+    [[ $valid == true ]] || return 0
+    signal=$(printf 'sigterm - terminate\nsigkill - force kill\n' | $DMENU -p 'Signal:' "$@") || return 0
+
+    case "$signal" in
+        'sigterm - terminate') signal=SIGTERM ;;
+        'sigkill - force kill') signal=SIGKILL ;;
+        *) return 0 ;;
+    esac
+
+    answer=$(printf 'yes\nno\n' | $DMENU -p "$mode: $signal to all $selected processes?" "$@") || return 0
+    [[ $answer == yes ]] || return 0
+
+    "${command[@]}" --exact --signal "$signal" -- "$selected"
+}
+
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"

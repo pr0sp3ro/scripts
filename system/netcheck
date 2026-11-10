@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+set -u
+
+readonly INTERNET_HOST="1.1.1.1"
+readonly HTTPS_URL="https://www.cloudflare.com/"
+readonly DOWNLOAD_URL="https://speed.cloudflare.com/__down?bytes=5000000"
+readonly PING_COUNT=10
+
+green='\033[1;32m'
+yellow='\033[1;33m'
+red='\033[1;31m'
+blue='\033[1;34m'
+reset='\033[0m'
+
+print_value() {
+    local label="$1"
+    local value="$2"
+    printf "%-24s %b\n" "$label" "$value"
+}
+
+format_ms() {
+    awk -v value="$1" 'BEGIN {
+        if (value >= 900) print "brak odpowiedzi"
+        else printf "%.0f ms", value * 1000
+    }'
+}
+
+format_mbps() {
+    awk -v bytes_per_second="$1" 'BEGIN { printf "%.1f Mb/s", bytes_per_second * 8 / 1000000 }'
+}
+
+printf "${blue}NETCHECK — connection quality${reset}\n\n"
+
+interface="$(ip route get "$INTERNET_HOST" 2>/dev/null | awk '/dev/ { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')"
+gateway="$(ip route 2>/dev/null | awk '$1 == "default" { print $3; exit }')"
+
+printf "${blue}Connection${reset}\n"
+print_value "Interface" "$interface"
+print_value "Home gateway" "$gateway"
+
+gateway_stats=""
+if [[ -n "$gateway" ]]; then
+    gateway_stats="$(ping -n -c "$PING_COUNT" -q "$gateway" 2>/dev/null)"
+fi
+internet_stats="$(ping -n -c "$PING_COUNT" -q "$INTERNET_HOST" 2>/dev/null)"
+
+gateway_loss="$(awk 'match($0, /[0-9.]+% packet loss/) { value=substr($0, RSTART, RLENGTH); sub(/% packet loss/, "", value); print value }' <<< "$gateway_stats")"
+gateway_rtt="$(awk -F'=' '/(rtt|round-trip)/ { split($2, values, "/"); print values[2] / 1000 }' <<< "$gateway_stats")"
+internet_loss="$(awk 'match($0, /[0-9.]+% packet loss/) { value=substr($0, RSTART, RLENGTH); sub(/% packet loss/, "", value); print value }' <<< "$internet_stats")"
+internet_rtt="$(awk -F'=' '/(rtt|round-trip)/ { split($2, values, "/"); print values[2] / 1000 }' <<< "$internet_stats")"
+
+[[ -n "$gateway_loss" ]] || gateway_loss=100
+[[ -n "$gateway_rtt" ]] || gateway_rtt=999
+[[ -n "$internet_loss" ]] || internet_loss=100
+[[ -n "$internet_rtt" ]] || internet_rtt=999
+
+printf "\n${blue}Stability and latency${reset}\n"
+print_value "Router — packet loss" "${gateway_loss}%"
+print_value "Router — average ping" "$(format_ms "$gateway_rtt")"
+print_value "Internet — packet loss" "${internet_loss}%"
+print_value "Internet — average ping" "$(format_ms "$internet_rtt")"
+
+if web_metrics="$(curl -4 -sS -o /dev/null --connect-timeout 5 --max-time 15 2>/dev/null \
+    -w '%{time_namelookup} %{time_connect} %{time_starttransfer} %{time_total}' "$HTTPS_URL")"; then
+    read -r dns_time connect_time ttfb total_time <<< "$web_metrics"
+else
+    dns_time=999
+    connect_time=999
+    ttfb=999
+    total_time=999
+fi
+
+if ! download_speed="$(curl -4 -sS -o /dev/null --connect-timeout 5 --max-time 30 2>/dev/null \
+    -w '%{speed_download}' "$DOWNLOAD_URL")"; then
+    download_speed=0
+fi
+
+printf "\n${blue}Service quality${reset}\n"
+print_value "DNS — response time" "$(format_ms "$dns_time")"
+print_value "HTTPS — connection" "$(format_ms "$connect_time")"
+print_value "HTTPS — first response" "$(format_ms "$ttfb")"
+print_value "HTTPS — full response" "$(format_ms "$total_time")"
+print_value "Download speed" "$(format_mbps "$download_speed")"
+
+public_ip="$(curl -4 -sS --connect-timeout 5 --max-time 10 https://api.ipify.org 2>/dev/null)"
+[[ -n "$public_ip" ]] || public_ip="brak odpowiedzi"
+printf "\n${blue}Address${reset}\n"
+print_value "Public IPv4" "$public_ip"
+
+score=100
+awk -v value="$gateway_loss" 'BEGIN { exit !(value > 0) }' && score=$((score - 25))
+awk -v value="$internet_loss" 'BEGIN { exit !(value > 0) }' && score=$((score - 35))
+awk -v value="$internet_rtt" 'BEGIN { exit !(value > 0.080) }' && score=$((score - 15))
+awk -v value="$internet_rtt" 'BEGIN { exit !(value > 0.150) }' && score=$((score - 15))
+awk -v value="$download_speed" 'BEGIN { exit !(value < 10000000) }' && score=$((score - 10))
+
+if (( score >= 85 )); then
+    quality="${green}EXCELLENT${reset}"
+elif (( score >= 65 )); then
+    quality="${yellow}GOOD${reset}"
+elif (( score >= 40 )); then
+    quality="${yellow}FAIR${reset}"
+else
+    quality="${red}POOR${reset}"
+fi
+
+printf "\n${blue}Result${reset}\n"
+print_value "Quality rating" "$quality"
+print_value "Score" "$score/100"

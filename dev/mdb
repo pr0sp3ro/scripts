@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: mdb COMMAND [ARGUMENTS]
+
+Manage local MariaDB databases and mariadb.service.
+
+Commands:
+  start                  Start MariaDB.
+  stop                   Stop MariaDB.
+  status                 Show service status without a pager.
+  list                   List databases as root.
+  root                   Open the MariaDB root client.
+  connect DATABASE USER  Connect and prompt securely for a password.
+  create DATABASE USER   Create a database and grant all privileges on it
+                         to an existing USER@localhost account.
+  -h, --help             Show this help.
+
+Examples:
+  mdb start
+  mdb create my_app my_user
+  mdb connect my_app my_user
+
+Database and user names for create must contain only letters, digits or
+underscores. Database names must be at most 64 characters long.
+create does not create accounts or overwrite existing databases.
+Administrative commands use sudo. status returns the systemctl exit code,
+which is nonzero when the service is inactive.
+EOF
+}
+
+command=${1:---help}
+
+if [[ $command == "--help" || $command == "-h" ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+case "$command" in
+    start|stop|status|list|root)
+        [[ $# -eq 1 ]] || fail "mdb: Usage: mdb $command"
+        ;;
+    connect|create)
+        [[ $# -eq 3 ]] || fail "mdb: Usage: mdb $command DATABASE USER"
+        [[ -n $2 && -n $3 ]] || fail "mdb: Database and user must not be empty."
+        ;;
+    *) fail "mdb: Unknown command: $command. Run mdb --help." ;;
+esac
+
+case "$command" in
+    start|stop) exec sudo systemctl "$command" mariadb.service ;;
+    status) exec systemctl status mariadb.service --no-pager ;;
+    list) exec sudo mariadb -u root -e 'SHOW DATABASES;' ;;
+    root) exec sudo mariadb -u root ;;
+    connect) exec mariadb --user="$3" --password --database="$2" ;;
+    create)
+        database=$2
+        user=$3
+
+        [[ $database =~ ^[a-zA-Z0-9_]+$ && ${#database} -le 64 ]] ||
+            fail "mdb: Database name must contain 1-64 letters, digits or underscores."
+        [[ $user =~ ^[a-zA-Z0-9_]+$ ]] ||
+            fail "mdb: User name must contain only letters, digits or underscores."
+
+        account_exists="$(sudo mariadb -u root --batch --skip-column-names -e \
+            "SELECT COUNT(*) FROM mysql.user WHERE User = '$user' AND Host = 'localhost';")"
+        [[ $account_exists == 1 ]] || fail "mdb: Account '$user'@'localhost' does not exist."
+
+        sudo mariadb -u root -e "CREATE DATABASE \`$database\`;"
+        sudo mariadb -u root -e "GRANT ALL PRIVILEGES ON \`$database\`.* TO '$user'@'localhost';"
+        printf "Created database %s and granted privileges to %s@localhost.\n" "$database" "$user"
+        ;;
+esac

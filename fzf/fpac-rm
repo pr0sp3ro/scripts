@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: fpac-rm
+Select an installed package, then choose Rns, R, Rs or Rn.
+  R   Remove the package.
+  Rs  Also remove dependencies no longer needed by other packages.
+  Rn  Do not preserve backup-designated configuration files as .pacsave.
+  Rns Combine Rs and Rn.
+Pacman displays the removal plan and asks for confirmation.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: fpac-rm"
+fi
+
+isinstalled pacman sudo fzf || exit 1
+
+packages=$(pacman -Qq)
+
+if [[ -z $packages ]]; then
+    exit 0
+fi
+
+if package=$(printf '%s\n' "$packages" | fzf --reverse --prompt='Remove> ' --preview 'pacman -Qi -- {1}'); then
+    if [[ -z $package ]]; then
+        exit 0
+    fi
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi
+
+if option=$(printf 'Rns\nR\nRs\nRn\n' | fzf --reverse --header='Choose pacman removal option:'); then
+    case "$option" in
+        Rns|R|Rs|Rn)
+        exec sudo pacman "-${option}v" -- "$package"
+        ;;
+        *)
+        exit 0
+        ;;
+    esac
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi

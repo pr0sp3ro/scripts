@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Reads file names from stdin and selects them in lf.
+# $id is exported by lf. Without it the commands go to every lf instance.
+
+target=${id:+$id }
+
+while IFS= read -r file; do
+    [ -z "$file" ] && continue
+
+    # lf parses the remote command, so quote characters must be escaped.
+    escaped=${file//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+
+    lf -remote "send ${target}select \"$escaped\""
+    lf -remote "send ${target}toggle"
+done

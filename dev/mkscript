@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+mkscript() {
+    file="$1"
+    touch "$file"
+    echo -e "#!/usr/bin/env bash\n\n" >> "$file"
+    chmod +x "$file"
+}
+
+case "$1" in
+    "-v")
+        mkscript "$2"
+        nvim +3 "$2" ;;
+    *)
+        mkscript "$1" ;;
+esac

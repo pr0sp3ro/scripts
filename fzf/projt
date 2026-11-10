@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: projt
+Select a project using proj, then attach to its tmux session.
+Inside tmux, switches the current client instead.
+Session names combine a readable directory name and a hash of its full path.
+Esc cancels without creating or switching sessions.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: projt"
+fi
+
+isinstalled tmux sha256sum tr || exit 1
+
+project_dir=$(proj)
+
+if [[ -z $project_dir ]]; then
+    exit 0
+fi
+
+project_name=$(printf '%s' "${project_dir##*/}" | LC_ALL=C tr -c 'A-Za-z0-9_-' '_')
+path_hash=$(printf '%s' "$project_dir" | sha256sum)
+session_name="${project_name:-project}-${path_hash:0:16}"
+
+if ! tmux has-session -t "=$session_name" 2>/dev/null; then
+    tmux new-session -ds "$session_name" -c "$project_dir"
+fi
+
+if [[ -z ${TMUX:-} ]]; then
+    exec tmux attach-session -t "=$session_name"
+else
+    exec tmux switch-client -t "=$session_name"
+fi

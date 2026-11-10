@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'HELP'
+Usage: mnt disk DEVICE
+       mnt luks DEVICE
+       mnt phone
+       mnt status
+       mnt --help
+
+Mount a disk, LUKS volume or MTP phone at ~/mnt.
+The mount directory is created if missing. All modes share this directory.
+Existing contents are hidden while mounted. Refuses an existing mount at
+~/mnt or below it, or an already mounted device.
+
+Commands:
+  disk DEVICE  Detect the filesystem and mount it using sudo.
+  luks DEVICE  Open LUKS as backupDrive and mount the detected filesystem.
+               Ask for a missing ext2/ext3/ext4 label in interactive use.
+               Press Enter to skip. Labels may contain up to 16 bytes.
+               Closes the newly opened mapper if mounting fails.
+  phone        Mount an MTP phone with jmtpfs as the current user.
+  status       Show mounts at ~/mnt and below it, plus the LUKS mapper status.
+  -h, --help   Show this help.
+
+FAT, exFAT and NTFS use the current user's UID/GID and umask=0077.
+Other filesystems retain their existing ownership and permissions.
+No chown is performed. Only one mount can use ~/mnt at a time.
+
+Examples:
+  mnt disk /dev/sdb1
+  mnt luks /dev/disk/by-uuid/UUID
+  mnt phone
+HELP
+}
+
+if [[ $# -eq 0 || ${1:-} == --help || ${1:-} == -h ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+mode=$1
+mount_dir="$HOME/mnt"
+mapper=backupDrive
+
+case "$mode" in
+    disk|luks) [[ $# -eq 2 ]] || fail "Usage: mnt $mode DEVICE" ;;
+    phone|status) [[ $# -eq 1 ]] || fail "Usage: mnt $mode" ;;
+    *) fail "Unknown command: $mode. Run mnt --help." ;;
+esac
+
+isinstalled findmnt readlink || exit 1
+mount_dir=$(readlink -m -- "$mount_dir")
+mounts=$(findmnt -rn -o TARGET) || fail "Cannot read mount table."
+occupied=false
+
+while IFS= read -r target; do
+    if [[ $target == "$mount_dir" || $target == "$mount_dir/"* ]]; then
+        occupied=true
+
+        if [[ $mode == status ]]; then
+            findmnt --mountpoint "$target"
+        fi
+    fi
+done <<< "$mounts"
+
+if [[ $mode == status ]]; then
+    [[ $occupied == true ]] || printf '%s is not mounted.\n' "$mount_dir"
+    [[ ! -e /dev/mapper/$mapper ]] || printf 'LUKS mapper exists: /dev/mapper/%s\n' "$mapper"
+    exit 0
+fi
+
+[[ $occupied == false ]] || fail "$mount_dir or a directory below it is already mounted."
+mkdir -p -- "$mount_dir"
+
+if [[ $mode == phone ]]; then
+    isinstalled jmtpfs || exit 1
+    [[ -w $mount_dir ]] || fail "$mount_dir is not writable."
+    jmtpfs "$mount_dir"
+else
+    isinstalled sudo mount blkid id || exit 1
+    device=$(readlink -f -- "$2") || fail "Cannot resolve device: $2"
+    [[ -b $device ]] || fail "Not a block device: $device"
+
+    if findmnt -rn --source "$device" >/dev/null; then
+        fail "Device is already mounted: $device"
+    fi
+
+    opened=false
+
+    cleanup() {
+        if [[ $opened == true ]]; then
+            sudo cryptsetup close "$mapper" || printf 'Could not close mapper: %s\n' "$mapper" >&2
+        fi
+    }
+
+    if [[ $mode == luks ]]; then
+        isinstalled cryptsetup || exit 1
+        [[ ! -e /dev/mapper/$mapper ]] || fail "Mapper $mapper already exists."
+        sudo cryptsetup isLuks "$device" || fail "Device is not a LUKS volume: $device"
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        sudo cryptsetup open "$device" "$mapper"
+        opened=true
+        device="/dev/mapper/$mapper"
+    fi
+
+    filesystem=$(sudo blkid -p -s TYPE -o value "$device") || fail "Cannot detect filesystem: $device"
+    [[ -n $filesystem ]] || fail "No filesystem detected: $device"
+
+    if [[ $mode == luks && -t 0 ]]; then
+        label=$(sudo blkid -p -s LABEL -o value "$device") || label=
+
+        if [[ -z $label ]]; then
+            case "$filesystem" in
+                ext2|ext3|ext4)
+                    IFS= read -r -p 'Disk label (Enter to skip): ' label || label=
+
+                    if [[ -n $label ]]; then
+                        label_bytes=$(LC_ALL=C; printf '%s' "${#label}")
+                        [[ $label_bytes -le 16 ]] || fail "Filesystem labels may contain at most 16 bytes."
+                        isinstalled e2label || exit 1
+                        sudo e2label "$device" "$label"
+                    fi
+                    ;;
+                *) printf 'Label prompt is supported only for ext2/ext3/ext4.\n' ;;
+            esac
+        fi
+    fi
+
+    options=(rw)
+
+    case "$filesystem" in
+        vfat|exfat|ntfs|ntfs3)
+            options+=("uid=$(id -u)" "gid=$(id -g)" umask=0077)
+            ;;
+        crypto_LUKS) fail "Encrypted device. Use mnt luks DEVICE." ;;
+    esac
+
+    mount_options=$(IFS=,; printf '%s' "${options[*]}")
+    sudo mount -t "$filesystem" -o "$mount_options" "$device" "$mount_dir"
+    opened=false
+    trap - EXIT INT TERM
+fi
+
+printf 'Mounted at %s.\n' "$mount_dir"
+ls --color=auto -alh -- "$mount_dir"

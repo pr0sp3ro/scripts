@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: se [--depth NUMBER] [DIRECTORY]
+Select a file and open it in Neovim. Default directory: current directory.
+Includes hidden and ignored files, excludes .git directories.
+Supports spaces and newlines in filenames. Esc cancels without opening files.
+--depth limits the directory search depth.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+isinstalled fd fzf nvim mktemp || exit 1
+
+options=(
+    --type f
+    --hidden
+    --no-ignore
+    --exclude .git
+    --print0
+)
+
+if [[ ${1:-} == --depth ]]; then
+    if ! [[ $# -ge 2 && $2 =~ ^[1-9][0-9]*$ ]]; then
+        fail "--depth requires a positive integer."
+    fi
+
+    options+=(--max-depth "$2")
+    shift 2
+fi
+
+if [[ $# -gt 1 ]]; then
+    fail "Usage: se [--depth NUMBER] [DIRECTORY]"
+fi
+
+search_dir=${1:-.}
+
+if [[ ! -d $search_dir ]]; then
+    fail "Directory does not exist: $search_dir"
+fi
+
+cd -- "$search_dir"
+temp_dir=$(mktemp -d)
+trap 'rm -rf -- "$temp_dir"' EXIT
+fd "${options[@]}" . > "$temp_dir/files"
+
+if [[ ! -s $temp_dir/files ]]; then
+    printf 'No files found.\n'
+    exit 0
+fi
+
+if fzf --read0 --print0 --reverse --height 20 \
+    --prompt='Edit file> ' \
+    < "$temp_dir/files" > "$temp_dir/selected"; then
+    IFS= read -r -d '' selected_file < "$temp_dir/selected"
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi
+
+rm -rf -- "$temp_dir"
+trap - EXIT
+exec nvim -- "$selected_file"

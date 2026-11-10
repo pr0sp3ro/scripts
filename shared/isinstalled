@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+for x in "$@"; do
+    if ! command -v "$x" >/dev/null 2>&1 && ! pacman -Qq "$x" >/dev/null 2>&1; then
+        printf '%s is not installed.\n' "$x" >&2
+        notify-send "$x is not installed." 2>/dev/null
+        exit 1
+    fi
+done

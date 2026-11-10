@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+if [[ ${1:-} == "--help" || ${1:-} == "-h" ]]; then
+    cat <<'EOF'
+Usage: cam [mpv options]
+
+Open a low-latency camera preview from /dev/video0.
+Additional arguments are passed directly to mpv.
+
+Examples:
+  cam
+  cam --fullscreen
+
+Options:
+  -h, --help  Show this help (as the first argument).
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+isinstalled mpv || exit 1
+
+[[ -c /dev/video0 ]] || fail "Camera device /dev/video0 does not exist."
+[[ -r /dev/video0 && -w /dev/video0 ]] || fail "Camera device /dev/video0 is not readable and writable."
+
+exec mpv av://v4l2:/dev/video0 --profile=low-latency --untimed "$@"

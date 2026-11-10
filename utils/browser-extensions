@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+shopt -s nullglob
+
+help() {
+    cat <<'HELP'
+Usage: browser-extensions [--stdout]
+       browser-extensions --help
+
+List extensions from Brave and Firefox profiles.
+Default output: ~/shrd/doc/extensions.txt
+  --stdout  Print the list without changing the output file.
+  -h, --help  Show this help.
+
+Firefox profiles are read from profiles.ini in ~/.config/mozilla/firefox
+and ~/.mozilla/firefox. Hidden extensions and pending removals are omitted.
+Firefox entries include enabled/disabled state from the saved profile data.
+Brave profiles are detected under ~/.config/BraveSoftware/Brave-Browser.
+Brave entries use the newest on-disk manifest per extension. They may
+include leftover files and do not indicate whether an extension is enabled.
+Neither browser is launched or modified. No network requests are made.
+The output file is replaced only after successful generation.
+HELP
+}
+
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+[[ $# -le 1 ]] || fail "Usage: browser-extensions [--stdout]"
+[[ ${1:-} == '' || ${1:-} == --stdout ]] || fail "Unknown option: $1"
+isinstalled jq awk sort tail mktemp || exit 1
+
+firefox_extensions() {
+    local base=$1 name relative path profile file rows
+
+    while IFS=$'\t' read -r name relative path; do
+        [[ -n $path ]] || continue
+        profile=$path
+        [[ $relative != 1 ]] || profile="$base/$path"
+        file="$profile/extensions.json"
+
+        if [[ ! -f $file ]]; then
+            printf 'Skipping Firefox profile without extensions.json: %s\n' "$profile" >&2
+            continue
+        fi
+
+        rows=$(jq -r '
+            [.addons[]
+             | select(.type == "extension" and .hidden != true and .pendingUninstall != true)]
+            | sort_by((.defaultLocale.name // .id) | ascii_downcase)
+            | .[]
+            | "  - \(.defaultLocale.name // .id) | \(.version) | \(if .active then "enabled" else "disabled" end)\n    ID: \(.id)"
+        ' "$file")
+        printf 'Firefox / %s\n' "$name"
+        printf '%s\n\n' "${rows:-  (no extensions)}"
+        found=true
+    done < <(awk '
+        function emit() {
+            if (section ~ /^Profile[0-9]+$/ && path != "")
+                printf "%s\t%s\t%s\n", (name != "" ? name : section), relative, path
+        }
+        { sub(/\r$/, "") }
+        /^\[/ {
+            emit()
+            section = substr($0, 2, length($0) - 2)
+            name = ""; path = ""; relative = "1"
+            next
+        }
+        /^Name=/ { name = substr($0, 6) }
+        /^Path=/ { path = substr($0, 6) }
+        /^IsRelative=/ { relative = substr($0, 12) }
+        END { emit() }
+    ' "$base/profiles.ini")
+}
+
+brave_extensions() {
+    local profile=$1 extension manifest name version key locale messages row
+    local -a manifests=() rows=()
+
+    for extension in "$profile/Extensions"/*; do
+        [[ -d $extension ]] || continue
+        manifests=("$extension"/*/manifest.json)
+        [[ ${#manifests[@]} -gt 0 ]] || continue
+        manifest=$(printf '%s\n' "${manifests[@]}" | LC_ALL=C sort -V | tail -n 1)
+        name=$(jq -r '.name // empty' "$manifest")
+        version=$(jq -r '.version // "unknown"' "$manifest")
+
+        if [[ $name == __MSG_*__ ]]; then
+            key=${name#__MSG_}
+            key=${key%__}
+            locale=$(jq -r '.default_locale // empty' "$manifest")
+            messages="${manifest%/manifest.json}/_locales/$locale/messages.json"
+
+            if [[ -n $locale && -f $messages ]]; then
+                name=$(jq -r --arg key "$key" '
+                    to_entries
+                    | map(select((.key | ascii_downcase) == ($key | ascii_downcase)))
+                    | .[0].value.message // $key
+                ' "$messages")
+            fi
+        fi
+
+        rows+=("  - ${name:-${extension##*/}} | $version"$'\n'"    ID: ${extension##*/}")
+    done
+
+    printf 'Brave / %s\n' "${profile##*/}"
+
+    if [[ ${#rows[@]} -gt 0 ]]; then
+        for row in "${rows[@]}"; do
+            printf '%s\n' "$row"
+        done
+    else
+        printf '  (no extension files)\n'
+    fi
+
+    printf '\n'
+    found=true
+}
+
+generate() {
+    local base profile found=false
+    printf 'Browser extensions\n==================\n\n'
+
+    for base in "$HOME/.config/mozilla/firefox" "$HOME/.mozilla/firefox"; do
+        if [[ -f $base/profiles.ini ]]; then
+            [[ -r $base/profiles.ini ]] || fail "Cannot read $base/profiles.ini"
+            firefox_extensions "$base"
+        fi
+    done
+
+    base="$HOME/.config/BraveSoftware/Brave-Browser"
+
+    for profile in "$base/Default" "$base"/Profile\ *; do
+        if [[ -d $profile ]]; then
+            brave_extensions "$profile"
+        fi
+    done
+
+    [[ $found == true ]] || fail "No browser profiles with extension data found."
+}
+
+if [[ ${1:-} == --stdout ]]; then
+    generate
+else
+    output="$HOME/shrd/doc/extensions.txt"
+    mkdir -p -- "${output%/*}"
+    temporary=$(mktemp "${output}.XXXXXX")
+    trap 'rm -f -- "$temporary"' EXIT
+    generate > "$temporary"
+    mv -- "$temporary" "$output"
+    trap - EXIT
+    printf 'Saved browser extensions to %s\n' "$output"
+fi

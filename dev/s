@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -eq 0 || ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: s SESSION
+       s --help
+
+Create or open a named tmux session.
+Inside tmux, switches the current client without nesting sessions.
+New sessions start in the current directory.
+SESSION may contain letters, digits, underscores and hyphens.
+
+Configuration: ${XDG_CONFIG_HOME:-~/.config}/tmux/tmux.conf
+tmux loads this configuration when starting its server.
+
+Examples:
+  s work
+  s personal
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 1 ]]; then
+    fail "Usage: s SESSION"
+fi
+
+session=$1
+config="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf"
+
+if [[ ! $session =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    fail "Session name may contain only letters, digits, underscores and hyphens."
+fi
+
+if [[ ! -f $config || ! -r $config ]]; then
+    fail "tmux configuration is not readable: $config"
+fi
+
+isinstalled tmux || exit 1
+
+if [[ -n ${TMUX:-} ]]; then
+    if ! tmux -f "$config" has-session -t "=$session" 2>/dev/null; then
+        tmux -f "$config" new-session -d -s "$session" -c "$PWD"
+    fi
+
+    exec tmux -f "$config" switch-client -t "=$session"
+fi
+
+if tmux -f "$config" has-session -t "=$session" 2>/dev/null; then
+    exec tmux -f "$config" attach-session -t "=$session"
+fi
+
+exec tmux -f "$config" new-session -A -s "$session" -c "$PWD"

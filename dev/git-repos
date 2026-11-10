@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: git-repos COMMAND [REPO ...]
+
+Manage configured Git repositories. Without REPO, processes all of them
+in a fixed order. Run list to see available names and paths.
+
+Commands:
+  list    Show configured repositories.
+  status  Show branch, local changes and ahead/behind counts when available.
+          Counts use locally known upstream state, without fetching.
+  pull    Require a clean working tree and pull with --ff-only.
+  push    Stage ALL changes, commit if needed, then push.
+  sync    Stage ALL changes, commit if needed, pull --rebase, then push.
+  -h, --help  Show this help.
+
+Automatic commit message: chore: sync local changes
+push and sync include tracked deletions and non-ignored untracked files.
+Write operations require a branch with an upstream and no unfinished
+merge, rebase, cherry-pick or revert.
+
+On failure, stops operations for that repo and continues with the others.
+Returns a nonzero exit code if any repo fails. No automatic rollback.
+Rebase conflicts remain available for manual resolution.
+
+Examples:
+  git-repos list
+  git-repos status
+  git-repos status scripts nvim
+  git-repos pull dotfiles
+  git-repos sync scripts nvim
+EOF
+}
+
+command=${1:---help}
+
+if [[ $command == --help || $command == -h ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+isinstalled git || exit 1
+
+case "$command" in
+    list|status|pull|push|sync) ;;
+    *) fail "Unknown command: $command. Run git-repos --help." ;;
+esac
+shift
+
+declare -ar REPO_ORDER=(scripts nvim shrd dotfiles)
+declare -Ar REPO_DIRS=(
+    [scripts]="$HOME/src/git/scripts"
+    [nvim]="$HOME/.config/nvim"
+    [shrd]="$HOME/shrd"
+    [dotfiles]="$HOME/src/git/dotfiles"
+)
+
+selected=("$@")
+
+if [[ ${#selected[@]} -eq 0 ]]; then
+    selected=("${REPO_ORDER[@]}")
+fi
+
+# Validate every name before any repository is modified.
+for name in "${selected[@]}"; do
+    [[ -n $name && -n ${REPO_DIRS[$name]:-} ]] || fail "Unknown repository: $name. Run git-repos list."
+done
+
+process_repo() {
+    local dir=$1 root state state_path changes diff_status
+
+    [[ -d $dir ]] || { printf 'Directory does not exist: %s\n' "$dir" >&2; return 1; }
+    root=$(git -C "$dir" rev-parse --show-toplevel) || return 1
+    [[ $(cd "$dir" && pwd -P) == "$(cd "$root" && pwd -P)" ]] || {
+        printf 'Not a repository root: %s\n' "$dir" >&2
+        return 1
+    }
+
+    if [[ $command == status ]]; then
+        git -C "$dir" status --short --branch
+        return $?
+    fi
+
+    git -C "$dir" symbolic-ref --quiet HEAD >/dev/null || {
+        printf 'Detached HEAD. Switch to a branch first.\n' >&2
+        return 1
+    }
+    git -C "$dir" rev-parse --verify '@{upstream}' >/dev/null || return 1
+
+    for state in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD sequencer; do
+        state_path=$(git -C "$dir" rev-parse --git-path "$state") || return 1
+        [[ $state_path == /* ]] || state_path="$dir/$state_path"
+
+        if [[ -e $state_path ]]; then
+            printf 'Unfinished Git operation (%s). Resolve it first.\n' "$state" >&2
+            return 1
+        fi
+    done
+
+    if [[ $command == pull ]]; then
+        changes=$(git -C "$dir" status --porcelain) || return 1
+        [[ -z $changes ]] || { printf 'Working tree is not clean.\n' >&2; return 1; }
+        git -C "$dir" pull --ff-only
+        return $?
+    fi
+
+    git -C "$dir" add -A || return 1
+    git -C "$dir" diff --cached --quiet
+    diff_status=$?
+
+    case "$diff_status" in
+        0) ;;
+        1) git -C "$dir" commit -m 'chore: sync local changes' || return 1 ;;
+        *) return "$diff_status" ;;
+    esac
+
+    if [[ $command == sync ]]; then
+        if ! git -C "$dir" pull --rebase --no-autostash; then
+            printf 'Pull/rebase failed in %s. Resolve any conflicts, then use:\n' "$dir" >&2
+            printf '  git -C "%s" rebase --continue\n' "$dir" >&2
+            printf 'To abort an active rebase: git -C "%s" rebase --abort\n' "$dir" >&2
+            return 1
+        fi
+    fi
+
+    git -C "$dir" push
+}
+
+failed=()
+succeeded=0
+
+for name in "${selected[@]}"; do
+    dir=${REPO_DIRS[$name]}
+
+    if [[ $command == list ]]; then
+        printf '%-16s %s\n' "$name" "$dir"
+        continue
+    fi
+
+    printf '\n[%s] %s\n' "$name" "$dir"
+
+    if process_repo "$dir"; then
+        succeeded=$((succeeded + 1))
+    else
+        failed+=("$name")
+    fi
+done
+
+[[ $command != list ]] || exit 0
+printf '\nSucceeded: %s. Failed: %s.\n' "$succeeded" "${#failed[@]}"
+
+if [[ ${#failed[@]} -gt 0 ]]; then
+    printf 'Failed repository: %s\n' "${failed[@]}" >&2
+    exit 1
+fi

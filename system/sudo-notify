@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# pam_exec starts it from the setuid sudo process (as the invoking user by
+# default, as root with "seteuid"): keep it self-contained (no user config, no
+# inherited PATH) and install a root-owned copy outside this repo.
+
+set -euo pipefail
+PATH=/usr/bin:/bin
+
+sound=/usr/share/sounds/freedesktop/stereo/window-attention.oga
+
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: sudo-notify
+       sudo-notify --help
+
+PAM hook: sends a desktop notification and plays a sound when sudo asks for
+a password, also when sudo is called by paru, makepkg or other scripts.
+It does not fire when credentials are cached or the rule is NOPASSWD.
+
+pam_exec starts it from the setuid sudo process, so install a root-owned copy:
+  sudo install -o root -g root -m 755 sudo-notify /usr/local/bin/sudo-notify
+
+Then add this line to /etc/pam.d/sudo, above "auth include system-auth":
+  auth    optional    pam_exec.so quiet /usr/local/bin/sudo-notify
+
+Test:
+  sudo -k && sudo true
+
+To remove it, delete that line from /etc/pam.d/sudo.
+EOF
+        exit 0
+        ;;
+    "") ;;
+    *)
+        echo "sudo-notify: unexpected argument: $1" >&2
+        exit 2
+        ;;
+esac
+
+[[ "${PAM_TYPE:-}" == auth ]] || exit 0
+
+user="${PAM_RUSER:-}"
+[[ -n "$user" && "$user" != root ]] || exit 0
+uid=$(id -u -- "$user") || exit 0
+gid=$(id -g -- "$user") || exit 0
+runtime="/run/user/$uid"
+[[ -S "$runtime/bus" ]] || exit 0
+
+# pam_exec is forked from the sudo process, so its cmdline is what was run.
+cmd=$(tr '\0' ' ' 2>/dev/null < "/proc/$PPID/cmdline") || cmd=sudo
+cmd="${cmd% }"
+cmd="${cmd:0:200}"
+# mako renders Pango markup.
+cmd="${cmd//'&'/'&amp;'}"
+cmd="${cmd//'<'/'&lt;'}"
+cmd="${cmd//'>'/'&gt;'}"
+
+# Without "seteuid", pam_exec keeps sudo's real uid and bash drops the setuid
+# euid, so the script already runs as the user and setpriv would fail.
+drop=()
+(( EUID == uid )) || drop=(setpriv --reuid="$uid" --regid="$gid" --init-groups --)
+
+as_user() {
+    "${drop[@]}" env -i PATH="$PATH" \
+        XDG_RUNTIME_DIR="$runtime" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+        "$@" </dev/null >/dev/null 2>&1 &
+}
+
+as_user notify-send --app-name=sudo --urgency=critical --expire-time=60000 \
+    --icon=dialog-password "sudo: password required" "$cmd${PAM_TTY:+ ($PAM_TTY)}"
+[[ -r "$sound" ]] && as_user pw-play "$sound"
+
+exit 0

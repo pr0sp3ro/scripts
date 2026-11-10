@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'HELP'
+Usage: phone COMMAND
+
+Commands:
+  mount, m   Mount the phone at ~/mnt using mnt phone.
+  umount, u  Unmount the phone using umnt phone.
+  status     Show mount status using mnt status.
+  backup     Replace ALL contents of the phone's Documents/Linux directory
+             with a copy of ~/shrd/doc/keepass (including hidden files).
+  -h, --help Show this help.
+
+Backup destination:
+  ~/mnt/Wewnętrzna pamięć współdzielona/Documents/Linux
+
+The phone must already be mounted through jmtpfs. Source and destination
+are checked before deleting anything. The new copy is written to
+.keepass.new first, so the phone needs room for both copies. Old contents
+are removed only after a successful copy. A failed copy leaves .keepass.new,
+which the next run replaces. No old copies are retained.
+The backup date is saved to ~/shrd/doc/backup_dates.txt only after copying.
+HELP
+}
+
+if [[ $# -eq 0 || ${1:-} == --help || ${1:-} == -h ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+[[ $# -eq 1 ]] || fail "Usage: phone COMMAND"
+
+case "$1" in
+    mount|m) exec mnt phone ;;
+    umount|u) exec umnt phone ;;
+    status) exec mnt status ;;
+    backup) ;;
+    *) fail "Unknown command: $1. Run phone --help." ;;
+esac
+
+isinstalled findmnt readlink cp rm mv date || exit 1
+phone_dir=$(readlink -m -- "$HOME/mnt")
+source_dir="$HOME/shrd/doc/keepass"
+backup_dir="$phone_dir/Wewnętrzna pamięć współdzielona/Documents/Linux"
+log_file="$HOME/shrd/doc/backup_dates.txt"
+
+filesystem=$(findmnt -rn --mountpoint "$phone_dir" -o FSTYPE) || fail "Phone is not mounted at $phone_dir."
+source_device=$(findmnt -rn --mountpoint "$phone_dir" -o SOURCE)
+[[ $filesystem == fuse.jmtpfs || $filesystem == jmtpfs || ($filesystem == fuse && $source_device == jmtpfs) ]] ||
+    fail "$phone_dir is not a jmtpfs phone mount."
+[[ -d $source_dir && -r $source_dir && -x $source_dir ]] || fail "Source directory is not readable: $source_dir"
+[[ -d $backup_dir && -w $backup_dir && -x $backup_dir ]] || fail "Backup directory is not accessible: $backup_dir"
+[[ $(readlink -f -- "$backup_dir") == "$backup_dir" ]] || fail "Backup path must not contain symbolic links."
+
+new_copy="$backup_dir/.keepass.new"
+final_copy="$backup_dir/${source_dir##*/}"
+
+# Copy before deleting, an MTP connection can drop in the middle of a copy.
+rm -rf -- "$new_copy"
+printf 'Copying keepass to the phone...\n'
+cp -vR -- "$source_dir" "$new_copy"
+
+shopt -s dotglob nullglob
+old_contents=()
+
+for path in "$backup_dir"/*; do
+    [[ $path == "$new_copy" ]] || old_contents+=("$path")
+done
+
+printf 'Removing old contents of %s...\n' "$backup_dir"
+
+if [[ ${#old_contents[@]} -gt 0 ]]; then
+    rm -rf -- "${old_contents[@]}"
+fi
+
+mv -- "$new_copy" "$final_copy"
+printf '%s => phone\n' "$(date '+%d %B %Y [%A] %H:%M')" >> "$log_file"
+printf 'Phone backup completed.\n'

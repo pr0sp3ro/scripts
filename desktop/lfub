@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# Based on lfub from Luke Smith's voidrice, https://github.com/LukeSmithxyz/voidrice
+# Licensed under GPL-3.0 (https://www.gnu.org/licenses/gpl-3.0.html), not MIT.
+
+# This is a wrapper script for lf that allows it to create image previews with
+# ueberzug/ueberzugpp. This works in concert with the lf configuration file
+# and the lf cleaner script.
+
+set -e
+
+cleanup() {
+    if [ -n "${LF_IMAGE_PID:-}" ]; then
+        kill "$LF_IMAGE_PID" >/dev/null 2>&1 || true
+    fi
+
+    exec 3>&- 2>/dev/null || true
+
+    if [ -n "${FIFO_UEBERZUG:-}" ]; then
+        rm -f -- "$FIFO_UEBERZUG"
+    fi
+}
+
+try_backend() {
+    "$@" <"$FIFO_UEBERZUG" &
+    LF_IMAGE_PID=$!
+    sleep 0.15
+    kill -0 "$LF_IMAGE_PID" >/dev/null 2>&1
+}
+
+start_backend() {
+    [ -n "${WAYLAND_DISPLAY:-}" ] || return 1
+
+    if command -v ueberzugpp >/dev/null 2>&1; then
+        try_backend ueberzugpp layer -s -o wayland -p json && return 0
+    fi
+
+    if command -v ueberzug >/dev/null 2>&1; then
+        try_backend ueberzug layer -s -o wayland -p json && return 0
+    fi
+
+    return 1
+}
+
+if [ -n "$SSH_CLIENT" ] || [ -n "$SSH_TTY" ]; then
+    lf "$@"
+    exit $?
+fi
+
+cache_dir="$HOME/.cache/lf"
+mkdir -p "$cache_dir" >/dev/null 2>&1 || true
+export FIFO_UEBERZUG="$cache_dir/ueberzug-$$"
+
+if mkfifo "$FIFO_UEBERZUG" 2>/dev/null; then
+    trap cleanup HUP INT QUIT TERM PWR EXIT
+
+    if start_backend; then
+        export LF_IMAGE_PID
+        # Keep a writer fd open so preview writes do not block between updates.
+        exec 3>"$FIFO_UEBERZUG"
+    else
+        # Backend unavailable; disable image path and keep lf working.
+        rm -f -- "$FIFO_UEBERZUG"
+        unset FIFO_UEBERZUG
+    fi
+
+    lf "$@" 3>&-
+else
+    # FIFO creation failed; run lf without image backend.
+    unset FIFO_UEBERZUG
+    lf "$@"
+fi

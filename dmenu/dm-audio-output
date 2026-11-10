@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+set -euo pipefail
+
+case "${1:-}" in
+    -h|--help)
+        printf 'Usage: dm-audio-output [menu options]\n\nSelect the default audio output and move current playback to it.\n'
+        exit 0
+        ;;
+esac
+
+isinstalled mnu pactl jq notify-send || exit 1
+
+default=$(pactl get-default-sink)
+sinks=$(pactl --format=json list sinks)
+options=$(jq -r --arg default "$default" '
+    .[] | "\(.index): \(.description)\(if .name == $default then " [current]" else "" end)"
+' <<< "$sinks")
+
+if [[ -z "$options" ]]; then
+    notify-send 'Audio output' 'No output devices available.'
+    exit 0
+fi
+
+choice=$(printf '%s\n' "$options" | $DMENU_V -i -p 'Audio output:' "$@") || exit 0
+[[ -n "$choice" ]] || exit 0
+
+if ! printf '%s\n' "$options" | grep -Fxq -- "$choice"; then
+    exit 1
+fi
+
+sink=${choice%%:*}
+inputs=$(pactl list short sink-inputs)
+pactl set-default-sink "$sink"
+
+failed=0
+
+while read -r input rest; do
+    [[ -n "$input" ]] || continue
+    pactl move-sink-input "$input" "$sink" || failed=1
+done <<< "$inputs"
+
+if (( failed )); then
+    notify-send 'Audio output' 'Default output changed, but some playback could not be moved.'
+    exit 1
+fi
+
+notify-send 'Audio output' "${choice#*: }"

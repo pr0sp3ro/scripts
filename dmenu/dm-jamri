@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+set -euo pipefail
+
+isinstalled mnu jamri notify-send flock || exit
+
+[[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR ]] || fail 'XDG_RUNTIME_DIR is unavailable.'
+exec 9> "$XDG_RUNTIME_DIR/dm-jamri.lock"
+flock -n 9 || exit 0
+
+choice=$(printf 'start\npause\nresume\nstop\n' | $DMENU -i -p 'jamri:' "$@") || exit 0
+
+case "$choice" in
+    start|stop)
+        args=("$choice")
+
+        if [[ "$choice" == start ]]; then
+            categories=$(jamri category list)
+            category=$(printf '%s\n' 'Skip' "$categories" |
+                $DMENU -i -p 'Category (optional):' "$@") || exit 0
+
+            if [[ -n "$category" && "$category" != Skip ]]; then
+                args+=("$category")
+            fi
+
+            name=$($DMENU -p 'Task:' "$@" </dev/null) || exit 0
+            [[ -n "$name" ]] || exit 0
+
+            args+=("$name")
+        fi
+
+        status=$(jamri status)
+
+        if [[ "$status" != idle ]]; then
+            quality=$(printf '%s\n' 'Skip' 'very poor' 'poor' 'average' 'good' 'very good' |
+                $DMENU -i -p 'Work quality (optional):' "$@") || exit 0
+            focus=$(printf '%s\n' 'Skip' 'none' 'low' 'moderate' 'high' 'full' |
+                $DMENU -i -p 'Focus (optional):' "$@") || exit 0
+
+            if [[ -n "$quality" && "$quality" != Skip ]]; then
+                args+=(--quality "$quality")
+            fi
+
+            if [[ -n "$focus" && "$focus" != Skip ]]; then
+                args+=(--focus "$focus")
+            fi
+        fi
+
+        jamri "${args[@]}"
+
+        if [[ "$choice" == stop ]]; then
+            notify-send 'jamri' 'Task stopped.'
+        fi
+        ;;
+    pause)
+        reason=$($DMENU -p 'Pause reason (optional):' "$@" </dev/null) || exit 0
+        jamri pause "$reason"
+        ;;
+    resume)
+        jamri resume
+        ;;
+esac

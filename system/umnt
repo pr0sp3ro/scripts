@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'HELP'
+Usage: umnt disk
+       umnt luks
+       umnt phone
+       umnt --help
+
+Unmount the device at ~/mnt.
+
+Commands:
+  disk   Unmount a disk using sudo (dev is accepted as an alias).
+  luks   Unmount backupDrive, then close its LUKS mapper.
+         If already unmounted, close the existing mapper only.
+  phone  Unmount a jmtpfs phone as the current user using fusermount.
+  -h, --help  Show this help.
+
+Refuses mismatched mount types and mounts nested below ~/mnt.
+No forced, lazy or recursive unmount is performed. If unmounting fails,
+no LUKS mapper is closed. Close files and terminals using the mount first.
+Use mnt status to inspect the current mounts.
+HELP
+}
+
+if [[ $# -eq 0 || ${1:-} == --help || ${1:-} == -h ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+[[ $# -eq 1 ]] || fail "Usage: umnt disk|luks|phone"
+
+mode=$1
+
+case "$mode" in
+    dev) mode=disk ;;
+    disk|luks|phone) ;;
+    *) fail "Unknown command: $mode. Run umnt --help." ;;
+esac
+
+isinstalled findmnt readlink || exit 1
+mount_dir=$(readlink -m -- "$HOME/mnt")
+mapper=/dev/mapper/backupDrive
+mounts=$(findmnt -rn -o TARGET) || fail "Cannot read mount table."
+mounted=false
+
+while IFS= read -r target; do
+    if [[ $target == "$mount_dir/"* ]]; then
+        fail "Nested mount exists: $target. Unmount it first."
+    fi
+
+    if [[ $target == "$mount_dir" ]]; then
+        mounted=true
+    fi
+done <<< "$mounts"
+
+if [[ $mounted == true ]]; then
+    filesystem=$(findmnt -rn --mountpoint "$mount_dir" -o FSTYPE)
+    source_device=$(findmnt -rn --mountpoint "$mount_dir" -o SOURCE)
+    mount_number=$(findmnt -rn --mountpoint "$mount_dir" -o MAJ:MIN)
+    is_luks=false
+
+    if [[ -b $mapper ]]; then
+        isinstalled lsblk || exit 1
+        mapper_number=$(lsblk -dnro MAJ:MIN "$mapper")
+        [[ $mount_number != "$mapper_number" ]] || is_luks=true
+    fi
+
+    case "$mode" in
+        disk)
+            [[ $filesystem == fuseblk || ($filesystem != fuse* && $filesystem != jmtpfs) ]] || fail "FUSE mount detected. Use umnt phone for jmtpfs."
+            [[ $is_luks == false ]] || fail "backupDrive is mounted. Use umnt luks."
+            [[ -b ${source_device%%\[*} ]] || fail "Not a block-device mount: $source_device"
+            isinstalled sudo umount || exit 1
+            sudo umount "$mount_dir"
+            ;;
+        luks)
+            [[ $is_luks == true ]] || fail "$mount_dir is not mounted from backupDrive."
+            isinstalled sudo umount cryptsetup || exit 1
+            sudo umount "$mount_dir"
+            ;;
+        phone)
+            [[ $filesystem == fuse.jmtpfs || $filesystem == jmtpfs || ($filesystem == fuse && $source_device == jmtpfs) ]] ||
+                fail "$mount_dir is not a jmtpfs phone mount."
+            isinstalled fusermount || exit 1
+            fusermount -u "$mount_dir"
+            ;;
+    esac
+
+    printf 'Unmounted %s.\n' "$mount_dir"
+else
+    printf '%s is not mounted.\n' "$mount_dir"
+fi
+
+if [[ $mode == luks ]]; then
+    if [[ -b $mapper ]]; then
+        isinstalled sudo cryptsetup || exit 1
+        sudo cryptsetup close backupDrive
+        printf 'Closed LUKS mapper backupDrive.\n'
+    else
+        printf 'LUKS mapper backupDrive is already closed.\n'
+    fi
+fi

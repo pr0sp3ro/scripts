@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: setbg IMAGE
+       setbg --help
+
+Copy IMAGE to ~/img/background and set it as the wallpaper using awww.
+The saved image is overwritten directly. No temporary files are created.
+Passing ~/img/background sets the saved wallpaper without copying it.
+Requires a running awww daemon. Does not start the daemon automatically.
+
+Examples:
+  setbg ~/img/wallpaper.jpg
+  setbg ~/img/background
+EOF
+}
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    help
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 1 ]]; then
+    help >&2
+    exit 1
+fi
+
+image=$1
+background="$HOME/img/background"
+
+if [[ ! -f $image || ! -r $image ]]; then
+    fail "Image is not a readable file: $image"
+fi
+
+isinstalled awww || exit 1
+mkdir -p -- "$HOME/img"
+
+if [[ ! $image -ef $background ]]; then
+    cp -- "$image" "$background"
+fi
+
+awww img "$background"

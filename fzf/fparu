@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: fparu
+Search repository and AUR packages with Paru, then install selected packages.
+Type a query to search. Tab selects multiple packages. Empty queries do not
+trigger searches. Paru asks for confirmation before installation.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: fparu"
+fi
+
+isinstalled paru pacman fzf sleep || exit 1
+
+search_command='
+    sleep 0.3
+    query={q}
+
+    if [ -n "$query" ]; then
+        paru -Ssq -- "$query" || true
+    fi
+'
+
+if selected_packages=$(
+    fzf --multi --disabled --reverse \
+        --prompt='Search packages> ' \
+        --bind "change:reload:$search_command" \
+        --preview 'paru -Si -- {1} 2>/dev/null || pacman -Si -- {1}' \
+        < /dev/null
+); then
+    if [[ -z $selected_packages ]]; then
+        exit 0
+    fi
+
+    mapfile -t package_names <<< "$selected_packages"
+    printf 'Selected packages:\n%s\n' "$selected_packages"
+    exec paru -S -- "${package_names[@]}"
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi

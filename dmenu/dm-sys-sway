@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+source _scripts_config
+
+ISINSTALLED="$SCRIPTS_DIR/shared/isinstalled"
+
+"$ISINSTALLED" mnu
+
+choice="$(
+    printf "lock\nexit sway\nreboot\npoweroff" | $DMENU -i -p "sway system"
+)"
+
+case "$choice" in
+    "lock")
+        "$ISINSTALLED" swaylock
+        exec swaylock -f -c 000000
+        ;;
+    "exit sway")
+        "$ISINSTALLED" swaymsg
+        swaymsg exit
+        ;;
+    "reboot")
+        "$ISINSTALLED" systemctl
+        systemctl reboot -i
+        ;;
+    "poweroff")
+        "$ISINSTALLED" systemctl
+        systemctl poweroff -i --output=verbose
+        ;;
+    *)
+        exit 1
+        ;;
+esac

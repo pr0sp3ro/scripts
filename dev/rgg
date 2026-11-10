@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+if [[ $# -eq 0 || ${1:-} == "--help" || ${1:-} == "-h" ]]; then
+    cat <<'EOF'
+Usage: rgg [rg options] PATTERN [PATH ...]
+
+Search with ripgrep, including hidden files and smart case matching.
+Respects ignore rules and excludes node_modules and .git directories.
+Without PATH, searches the current directory (or stdin when piped).
+
+Examples:
+  rgg 'CompanyDeletionService'
+  rgg 'company_id' app/ routes/
+  rgg -F 'User::class'
+  rgg -t php 'ValidationException'
+  rgg -l 'TODO'
+  rgg --no-ignore 'pattern'
+
+Options:
+  -h, --help  Show this help (as the first argument).
+  Other arguments are passed directly to rg. Run rg --help for all options.
+EOF
+    exit 0
+fi
+
+exec rg -HSp --hidden \
+    -g '!node_modules' \
+    -g '!.git' \
+    "$@"

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == --help || ${1:-} == -h ]]; then
+    cat <<'EOF'
+Usage: genpass [LENGTH]
+       genpass --help
+
+Generate a random password and copy it to the clipboard without printing it.
+LENGTH defaults to 24 and must be an integer from 1 to 4096.
+Uses ASCII letters, digits and punctuation, without spaces or a newline.
+Random data comes from /dev/urandom.
+
+Uses wl-copy on Wayland.
+The password remains in the clipboard until replaced and may be retained
+by a clipboard manager.
+
+Examples:
+  genpass
+  genpass 32
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+[[ $# -le 1 ]] || fail "Usage: genpass [LENGTH]"
+length=${1:-24}
+[[ $length =~ ^[1-9][0-9]{0,3}$ ]] || fail "Length must be an integer from 1 to 4096."
+[[ $length -le 4096 ]] || fail "Length must be an integer from 1 to 4096."
+isinstalled head tr wl-copy || exit 1
+
+password=''
+
+# Read finite chunks before filtering to avoid SIGPIPE with pipefail.
+while [[ ${#password} -lt $length ]]; do
+    chunk=$(head -c 256 /dev/urandom | LC_ALL=C tr -dc '!-~')
+    password+=$chunk
+done
+
+printf '%s' "${password:0:length}" | wl-copy --type text/plain
+unset password chunk
+printf 'Copied a %s-character password to the clipboard.\n' "$length"

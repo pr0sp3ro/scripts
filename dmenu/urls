@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC1091
+
+source _scripts_config
+isinstalled wl-copy || exit
+
+getSite() {
+    $DMENU_V -i < "$HOME/shrd/doc/bookmarks.md" |
+        cut -d' ' -f1
+}
+
+site=$(getSite | tr -d '\n')
+
+# Esc in the menu gives empty output, keep the clipboard untouched then.
+[ -n "$site" ] || exit 0
+
+printf '%s' "$site" | wl-copy

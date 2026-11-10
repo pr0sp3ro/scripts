@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: fcomposer
+Select available Composer package names. Tab selects multiple packages.
+Prints one package name per line. Requires a Composer project directory.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: fcomposer"
+fi
+
+isinstalled composer jq fzf || exit 1
+
+if ! [[ -f composer.json ]]; then
+    fail "composer.json not found in the current directory."
+fi
+
+packages=$(
+    composer show --all --no-interaction --no-ansi --format=json |
+        jq -r '.available[] | if type == "string" then . else .name end'
+)
+
+if [[ -z $packages ]]; then
+    exit 0
+fi
+
+if selected=$(printf '%s\n' "$packages" | fzf --multi --reverse --prompt='Composer> '); then
+    if [[ -n $selected ]]; then
+        printf '%s\n' "$selected"
+    fi
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi

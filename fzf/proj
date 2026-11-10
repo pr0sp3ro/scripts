@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: proj
+Select a project directory and print its absolute path.
+Lists subdirectories of git, local and http, plus nvim.
+Missing locations are skipped. Esc cancels without selecting a directory.
+For changing the current shell folder, use the Zsh proj function that calls
+this executable.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+if [[ $# -ne 0 ]]; then
+    fail "Usage: proj"
+fi
+
+isinstalled fd fzf readlink sort || exit 1
+
+project_roots=(
+    "$HOME/src/git"
+    "$HOME/src/local"
+    /srv/http
+)
+
+single_projects=(
+    "$HOME/.config/nvim"
+)
+
+paths=()
+
+for root in "${project_roots[@]}"; do
+    if [[ ! -d $root ]]; then
+        continue
+    fi
+
+    while IFS= read -r -d '' dir; do
+        paths+=("${dir%/}")
+    done < <(fd --max-depth 1 --type d --print0 . "$root")
+done
+
+for dir in "${single_projects[@]}"; do
+    if [[ -d $dir ]]; then
+        paths+=("$dir")
+    fi
+done
+
+if [[ ${#paths[@]} -eq 0 ]]; then
+    fail "No projects found."
+fi
+
+# Records are "name/path": a name has no slash, so it splits unambiguously.
+records=()
+
+for dir in "${paths[@]}"; do
+    records+=("${dir##*/}/$dir")
+done
+
+mapfile -d '' -t records < <(printf '%s\0' "${records[@]}" | LC_ALL=C sort -z -t/ -k1,1 -k2)
+
+print_entries() {
+    local i
+
+    # Numeric IDs keep selection parsing independent of names and paths.
+    for i in "${!records[@]}"; do
+        printf '%d\t%s  %s\0' "$i" "${records[i]%%/*}" "${records[i]#*/}"
+    done
+}
+
+if selected=$(fzf --read0 \
+    --delimiter='\t' \
+    --with-nth=2.. \
+    --layout=reverse \
+    --height=80% \
+    --prompt='Project> ' \
+    --no-multi \
+    < <(print_entries)); then
+    id=${selected%%$'\t'*}
+else
+    status=$?
+
+    if [[ $status == 1 || $status == 130 ]]; then
+        exit 0
+    fi
+
+    fail "fzf failed with status $status."
+fi
+
+if [[ ! $id =~ ^[0-9]+$ || $id -ge ${#records[@]} ]]; then
+    fail "Invalid fzf selection."
+fi
+
+readlink -f -- "${records[id]#*/}"

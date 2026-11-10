@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+isinstalled find sort cut imv || exit
+
+backgroundDir="$HOME/img/bgs"
+find "$backgroundDir" -type f -printf '%T@\t%p\n' | sort -nr | cut -f2- | imv

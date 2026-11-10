@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: ports [--tcp|--udp] [--all] [PORT]
+       ports --help
+
+Show listening TCP and UDP sockets with numeric ports and process details.
+Uses sudo to include processes owned by other users.
+Columns: Netid, State, Local Address:Port, Peer Address:Port, Process.
+Column widths follow their contents, with two spaces between columns.
+
+Options:
+  --tcp       Show TCP only.
+  --udp       Show UDP only.
+  --all       Show all TCP/UDP sockets, including connections.
+  PORT        Filter by local port, from 1 to 65535.
+  -h, --help  Show this help.
+
+Examples:
+  ports
+  ports 8000
+  ports --tcp 443
+  ports --udp
+  ports --all
+EOF
+}
+
+protocol=''
+scope=-l
+port=''
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            ;;
+        --tcp|--udp)
+            if [[ -n $protocol && $protocol != "$1" ]]; then
+                help >&2
+                exit 1
+            fi
+
+            protocol=$1
+            ;;
+        --all)
+            scope=-a
+            ;;
+        *)
+            if [[ -n $port || ! $1 =~ ^[1-9][0-9]{0,4}$ ]]; then
+                help >&2
+                exit 1
+            fi
+
+            if [[ $1 -gt 65535 ]]; then
+                help >&2
+                exit 1
+            fi
+
+            port=$1
+            ;;
+    esac
+
+    shift
+done
+
+# shellcheck disable=SC1091
+source _scripts_config
+isinstalled ss sudo awk || exit 1
+
+# Request both protocols so ss always includes the Netid column.
+options=("$scope" -n -p -t -u -H -O)
+
+if [[ -n $port ]]; then
+    sockets=$(sudo ss "${options[@]}" "sport = :$port")
+else
+    sockets=$(sudo ss "${options[@]}")
+fi
+
+printf '%s\n' "$sockets" | awk -v protocol="${protocol#--}" '
+    BEGIN {
+        rows = 1
+        cells[1, 1] = "Netid"
+        cells[1, 2] = "State"
+        cells[1, 3] = "Local Address:Port"
+        cells[1, 4] = "Peer Address:Port"
+        cells[1, 5] = "Process"
+
+        for (column = 1; column <= 4; column++) {
+            widths[column] = length(cells[1, column])
+        }
+    }
+
+    NF >= 6 && (protocol == "" || $1 == protocol) {
+        rows++
+        cells[rows, 1] = $1
+        cells[rows, 2] = $2
+        cells[rows, 3] = $5
+        cells[rows, 4] = $6
+
+        process = $0
+
+        for (field = 1; field <= 6; field++) {
+            sub(/^[[:space:]]*[^[:space:]]+[[:space:]]*/, "", process)
+        }
+
+        cells[rows, 5] = process == "" ? "-" : process
+
+        for (column = 1; column <= 4; column++) {
+            width = length(cells[rows, column])
+
+            if (width > widths[column]) {
+                widths[column] = width
+            }
+        }
+    }
+
+    END {
+        for (row = 1; row <= rows; row++) {
+            for (column = 1; column <= 4; column++) {
+                printf "%-*s  ", widths[column], cells[row, column]
+            }
+
+            printf "%s\n", cells[row, 5]
+        }
+    }
+'

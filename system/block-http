@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: block-http
+       block-http --help
+
+Block incoming TCP IPv4 traffic to port 80 on interfaces other than lo.
+Inserts the rule at the start of iptables INPUT, before existing rules.
+Repeated runs do not add duplicate copies of this rule.
+
+Requires sudo and iptables. Does not change IPv6, HTTPS (port 443),
+outgoing traffic or forwarded traffic (including some Docker traffic).
+The rule is not saved as persistent configuration.
+Loopback traffic remains subject to your other firewall rules.
+
+To remove this rule:
+  sudo iptables -w -D INPUT ! -i lo -p tcp --dport 80 -j DROP
+EOF
+        exit 0
+        ;;
+    "") ;;
+    *) printf 'Usage: block-http [--help]\n' >&2; exit 1 ;;
+esac
+
+if [[ $# -gt 1 ]]; then
+    printf 'Usage: block-http [--help]\n' >&2
+    exit 1
+fi
+
+rule=(! -i lo -p tcp --dport 80 -j DROP)
+
+if sudo iptables -w -C INPUT "${rule[@]}"; then
+    printf 'HTTP IPv4 blocking rule already exists.\n'
+else
+    sudo iptables -w -I INPUT 1 "${rule[@]}"
+    printf 'Blocked incoming HTTP IPv4 traffic outside loopback.\n'
+fi

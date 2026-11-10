@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+# shellcheck disable=SC2034
+
+DMENU="mnu"
+DMENU_V="mnu -l 20"
+SCRIPTS_DIR="$HOME/src/git/scripts"
+TMP_DIR="$HOME/tmp"
+
+run_dust() { dust -br -d 0 "$@"; }
+
+_print_message() {
+    local color="$1"
+    shift
+
+    local message="$*"
+
+    if [[ -t 1 && -z ${NO_COLOR+x} ]]; then
+        if [[ $message =~ ^(=+\>)[[:space:]](.*)$ ]]; then
+            printf '\033[%sm%s\033[0;37m %s\033[0m\n' "$color" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        else
+            printf '\033[%sm%s\033[0m\n' "$color" "$message"
+        fi
+    else
+        printf '%s\n' "$message"
+    fi
+}
+
+info() { _print_message '1;34' "$@"; }
+success() { _print_message '1;32' "$@"; }
+warn() { _print_message '1;33' "$@" >&2; }
+error() { _print_message '1;31' "$@" >&2; }
+
+fail() {
+    local message="${1:-An error occurred.}"
+    local status="${2:-1}"
+
+    error "$message"
+    exit "$status"
+}

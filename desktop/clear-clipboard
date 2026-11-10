@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+isinstalled wl-copy || exit
+
+wl-copy --clear
+notify-send "Clipboard cleared."

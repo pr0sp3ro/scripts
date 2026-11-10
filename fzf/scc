@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: scc [-p|--private]
+Select a script and edit it in Neovim, searching at most two levels deep.
+Without arguments: ~/src/git/scripts
+-p, --private:   ~/src/git/scripts/private
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+dir=$SCRIPTS_DIR
+
+case "${1:-}" in
+    '')
+        if [[ $# -ne 0 ]]; then
+            fail "Usage: scc [-p|--private]"
+        fi
+        ;;
+    -p|--private)
+        if [[ $# -ne 1 ]]; then
+            fail "Usage: scc [-p|--private]"
+        fi
+
+        dir="$SCRIPTS_DIR/private"
+        ;;
+    *)
+        fail "Usage: scc [-p|--private]"
+        ;;
+esac
+
+exec se --depth 2 "$dir"

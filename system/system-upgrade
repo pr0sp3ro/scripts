@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: system-upgrade [--aur]
+       system-upgrade --help
+
+Upgrade Arch Linux packages. Always refresh package databases and update
+archlinux-keyring first using --needed --noconfirm, then upgrade the system.
+The full system upgrade keeps Pacman's confirmation prompts.
+Stops immediately if any step fails.
+
+Options:
+  --aur       Also upgrade AUR packages with paru -Sua after Pacman succeeds.
+  -h, --help  Show this help.
+
+Examples:
+  system-upgrade
+  system-upgrade --aur
+EOF
+}
+
+aur=false
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --aur)
+            aur=true
+            ;;
+        -h|--help)
+            help
+            exit 0
+            ;;
+        *)
+            help >&2
+            exit 1
+            ;;
+    esac
+
+    shift
+done
+
+# shellcheck disable=SC1091
+source _scripts_config
+isinstalled pacman sudo || exit 1
+
+if [[ $aur == true ]]; then
+    isinstalled paru || exit 1
+fi
+
+printf 'Refreshing package databases and updating archlinux-keyring...\n'
+sudo pacman -Sy --needed --noconfirm archlinux-keyring
+
+printf '\nUpgrading system packages...\n'
+sudo pacman -Su
+
+if [[ $aur == true ]]; then
+    printf '\nUpgrading AUR packages...\n'
+    paru -Sua
+fi
+
+printf '\nSystem upgrade completed.\n'

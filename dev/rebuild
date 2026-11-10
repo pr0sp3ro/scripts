@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: rebuild PROGRAM
+       rebuild --help
+
+Clean, build and install one of these local projects:
+  mnu    ~/src/mnu
+  st-c     ~/src/st-c
+
+Builds as the current user. Only installation uses sudo.
+Stops immediately if cleaning, building or installation fails.
+Preserves config.h by default.
+
+Options:
+  -h, --help      Show this help.
+
+Examples:
+  rebuild mnu
+  rebuild st-c
+EOF
+}
+
+if [[ $# -eq 0 || ${1:-} == "--help" || ${1:-} == "-h" ]]; then
+    usage
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+[[ $# -eq 1 ]] || fail "rebuild: Too many arguments. Run rebuild --help."
+
+case "$1" in
+    mnu) project=mnu ;;
+    st-c) project=st-c ;;
+    *) fail "rebuild: Unknown program: $1. Run rebuild --help." ;;
+esac
+
+project_dir="$HOME/src/git/$project"
+[[ -d $project_dir ]] || fail "rebuild: Project directory does not exist: $project_dir"
+cd "$project_dir"
+[[ -f Makefile ]] || fail "rebuild: Makefile not found in $project_dir"
+isinstalled make sudo || exit 1
+
+printf 'Rebuilding %s...\n' "$1"
+make clean
+make
+sudo make install
+printf 'Installed %s.\n' "$1"
