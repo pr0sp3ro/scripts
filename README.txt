@@ -1,8 +1,8 @@
 scripts
 
-Shell scripts for Arch Linux and sway.
+Personal shell scripts for Arch and sway.
 
-Install:
+If you want to use them, clone this repository:
 
     git clone https://github.com/pr0sp3ro/scripts.git ~/src/git/scripts
 
