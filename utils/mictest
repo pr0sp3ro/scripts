@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    cat <<'EOF'
+Usage: mictest [seconds]
+Records one take from the raw G435 mic and the "G435 Mic EQ" source at the same time,
+then plays the raw take first and the EQ take second. Default length is 8 seconds.
+Read the same text each time and listen on the headphones you normally use.
+EOF
+    exit 0
+fi
+
+# shellcheck disable=SC1091
+source _scripts_config
+
+readonly RAW_SOURCE="alsa_input.usb-Logitech_G_series_G435_Wireless_Gaming_Headset_202105190004-00.mono-fallback"
+readonly EQ_SOURCE="g435_mic_eq"
+
+seconds="${1:-8}"
+[[ $seconds =~ ^[1-9][0-9]*$ ]] || fail "Usage: mictest [seconds]"
+
+isinstalled pw-record pw-play pactl || exit 1
+
+source_names=$(pactl list sources short | cut -f2)
+grep -qxF "$RAW_SOURCE" <<< "$source_names" || fail "G435 mic not found. Is the headset on?"
+grep -qxF "$EQ_SOURCE" <<< "$source_names" || fail "Source $EQ_SOURCE not found. Restart PipeWire after stowing the config."
+
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+
+# Both sources record the same take, so the comparison does not depend on how you spoke
+info "=> Recording ${seconds}s, speak now"
+timeout -s INT "$seconds" pw-record --channels 1 --target "$RAW_SOURCE" "$work_dir/raw.wav" &
+timeout -s INT "$seconds" pw-record --channels 1 --target "$EQ_SOURCE" "$work_dir/eq.wav" &
+wait
+
+info "=> Playing raw"
+pw-play "$work_dir/raw.wav"
+
+info "=> Playing EQ"
+pw-play "$work_dir/eq.wav"
