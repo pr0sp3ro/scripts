@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Default handler for http(s) links opened from other applications.
+# Selected domains open in Chromium, everything else in Brave.
+
+url=${1:-}
+
+# Reduce the URL to its host: drop the scheme, path, userinfo and port.
+host=${url#*://}
+host=${host%%[/?#]*}
+host=${host##*@}
+host=${host%%:*}
+host=${host,,}
+
+case "$host" in
+    github.com | *.github.com | linear.app | *.linear.app)
+        exec chromium "$url"
+        ;;
+esac
+
+exec brave ${url:+"$url"}
