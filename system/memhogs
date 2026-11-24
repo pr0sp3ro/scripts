@@ -1,4 +1,205 @@
 #!/usr/bin/env bash
 
-ps -eo pid,%mem,comm --sort=-%mem | head -n 15
-# notify-send -t 10000 "Memory hogs" "$(ps axch -o cmd:15,%mem --sort=-%mem | head)"
+# Sums PSS per process name. PSS splits shared pages between processes,
+# so multi-process apps (Electron, Chromium, JVM daemons) add up to their real cost.
+# Without sudo only your own processes are readable.
+#
+# Usage:
+#   memhogs [limit]  top apps by PSS (default 15)
+#   memhogs <name>   processes of one app, name as shown in the top list
+
+show_top() {
+    local limit=$1
+
+    gawk '
+        # Kernel threads and exited processes have unreadable smaps_rollup.
+        BEGINFILE {
+            if (ERRNO != "") {
+                nextfile
+            }
+        }
+
+        /^Pss:/ {
+            pid = FILENAME
+            gsub(/[^0-9]/, "", pid)
+
+            name = ""
+            getline name < ("/proc/" pid "/comm")
+            close("/proc/" pid "/comm")
+
+            sum[name] += $2
+            count[name]++
+            total += $2
+        }
+
+        END {
+            for (name in sum) {
+                printf "%7.2f GiB  %3d  %s\n", sum[name] / 1048576, count[name], name
+            }
+
+            # Always the largest value, so sort puts it first.
+            printf "%7.2f GiB       TOTAL\n", total / 1048576
+        }
+    ' /proc/[0-9]*/smaps_rollup | sort -rn | head -n "$((10#$limit + 1))"
+}
+
+# Prints "pid pss anon file shmem swap" in KiB for every process named $1.
+app_memory() {
+    APP=$1 gawk '
+        BEGINFILE {
+            # ENDFILE still runs for files skipped here.
+            matched = 0
+
+            if (ERRNO != "") {
+                nextfile
+            }
+
+            pid = FILENAME
+            gsub(/[^0-9]/, "", pid)
+
+            comm = ""
+            getline comm < ("/proc/" pid "/comm")
+            close("/proc/" pid "/comm")
+
+            if (comm != ENVIRON["APP"]) {
+                nextfile
+            }
+
+            matched = 1
+            delete kib
+        }
+
+        {
+            kib[$1] = $2
+        }
+
+        ENDFILE {
+            if (matched) {
+                print pid, kib["Pss:"] + 0, kib["Pss_Anon:"] + 0, kib["Pss_File:"] + 0, kib["Pss_Shmem:"] + 0, kib["SwapPss:"] + 0
+            }
+        }
+    ' /proc/[0-9]*/smaps_rollup
+}
+
+# JVM command lines are mostly module flags and classpaths, so the main class
+# and heap limit are what tell the processes apart.
+describe_jvm() {
+    tr '\0' '\n' < "/proc/$1/cmdline" | gawk '
+        NR == 1 {
+            java = $0
+            next
+        }
+
+        skip_value {
+            skip_value = 0
+            next
+        }
+
+        /^(-cp|-classpath|--class-path|-p|--module-path|--upgrade-module-path|--add-opens|--add-exports|--add-reads|--add-modules|--limit-modules|--patch-module|--enable-native-access)$/ {
+            skip_value = 1
+            next
+        }
+
+        /^-Xmx/ {
+            heap = $0
+            next
+        }
+
+        # Options and @argfiles, Gradle workers pass their classpath in an argfile.
+        /^[-@]/ {
+            next
+        }
+
+        {
+            main = $0
+            exit
+        }
+
+        END {
+            print java, main, heap
+        }
+    '
+}
+
+describe_command() {
+    local pid=$1
+    local argv0
+
+    IFS= read -r -d '' argv0 < "/proc/$pid/cmdline"
+
+    if [[ ${argv0##*/} == java ]]; then
+        describe_jvm "$pid"
+        return
+    fi
+
+    # Newlines and tabs in arguments would break the table rows and columns.
+    tr '\0\n\t' '   ' < "/proc/$pid/cmdline"
+}
+
+show_app() {
+    local name=$1
+    local rows
+
+    rows=$(app_memory "$name" | sort -k2 -rn)
+
+    if [[ -z $rows ]]; then
+        echo "memhogs: no readable process named '$name', use a name from the top list" >&2
+        exit 1
+    fi
+
+    APP=$name gawk '
+        {
+            count++
+            pss   += $2
+            anon  += $3
+            file  += $4
+            shmem += $5
+            swap  += $6
+        }
+
+        END {
+            gib = 1048576
+            printf "%s: %d processes, PSS %.2f GiB (anon %.2f, file %.2f, shmem %.2f), swap %.2f GiB\n\n",
+                ENVIRON["APP"], count, pss / gib, anon / gib, file / gib, shmem / gib, swap / gib
+        }
+    ' <<< "$rows"
+
+    local pid pss anon file shmem swap uptime cwd command
+
+    {
+        printf 'PID\tPSS MiB\tANON\tFILE\tSHMEM\tSWAP\tUPTIME\tCWD\tCOMMAND\n'
+
+        while read -r pid pss anon file shmem swap; do
+            uptime=$(ps -o etime= -p "$pid" 2>/dev/null)
+            cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+            command=$(describe_command "$pid" 2>/dev/null)
+
+            printf '%s\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n' \
+                "$pid" \
+                $((pss / 1024)) \
+                $((anon / 1024)) \
+                $((file / 1024)) \
+                $((shmem / 1024)) \
+                $((swap / 1024)) \
+                "${uptime// /}" \
+                "${cwd/#"$HOME"/'~'}" \
+                "${command//"$HOME"/'~'}"
+        done <<< "$rows"
+    } | column -t -s $'\t' -R 1,2,3,4,5,6,7 | truncate_to_terminal
+}
+
+# Long Electron command lines would wrap every row, files and pipes get full lines.
+truncate_to_terminal() {
+    if [[ -t 1 ]]; then
+        cut -c "1-$(tput cols)"
+        return
+    fi
+
+    cat
+}
+
+if [[ -z ${1-} || $1 =~ ^[0-9]+$ ]]; then
+    show_top "${1:-15}"
+else
+    show_app "$1"
+fi
