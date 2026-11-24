@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: ws-pull REPO_DIR ...
+
+Fetch each repository and fast-forward its branch to the upstream, in parallel.
+Skips repositories with a detached HEAD or a branch without upstream.
+Uncommitted changes stay in place. If the fast-forward would overwrite them,
+the repository is left unchanged and reported as failed.
+Sends a desktop notification for every failure and returns
+a nonzero exit code if any repository fails.
+
+Example:
+  ws-pull ~/src/git/reordero ~/src/git/tabon-pos
+EOF
+}
+
+if [[ $# -eq 0 || $1 == -h || $1 == --help ]]; then
+    help
+    exit 0
+fi
+
+notify_failure() {
+    local name=$1 message=$2
+
+    printf '[%s] pull failed:\n%s\n' "$name" "$message" >&2
+    notify-send -u critical "git pull failed: $name" "$(grep -v -e '^hint:' -e '^$' <<<"$message" | head -n 3)"
+}
+
+fetch_repo() {
+    # Fail instead of waiting for credentials, so a session never hangs on a prompt.
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+        timeout 60 git -C "$1" fetch 2>&1
+}
+
+pull_repo() {
+    local dir=$1 name output status attempt
+
+    name=$(basename "$dir")
+
+    if ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+        notify_failure "$name" "Not a Git repository: $dir"
+        return 1
+    fi
+
+    git -C "$dir" rev-parse --verify --quiet '@{upstream}' >/dev/null || return 0
+
+    # A concurrent fetch, e.g. lazygit's on startup, can fail ref locking. One retry covers it.
+    for attempt in 1 2; do
+        output=$(fetch_repo "$dir")
+        status=$?
+
+        [[ $status -ne 0 && $status -ne 124 && $attempt -eq 1 ]] || break
+        sleep 3
+    done
+
+    if [[ $status -eq 124 ]]; then
+        output="Fetch timed out after 60 seconds."
+    fi
+
+    if [[ $status -ne 0 ]]; then
+        notify_failure "$name" "$output"
+        return 1
+    fi
+
+    # merge instead of pull, so rebase.autoStash never re-applies local changes with conflicts.
+    if ! output=$(git -C "$dir" merge --ff-only --no-autostash '@{upstream}' 2>&1); then
+        notify_failure "$name" "$output"
+        return 1
+    fi
+
+    printf '[%s] %s\n' "$name" "$(tail -n 1 <<<"$output")"
+}
+
+pids=()
+
+for dir in "$@"; do
+    pull_repo "$dir" &
+    pids+=("$!")
+done
+
+result=0
+
+for pid in "${pids[@]}"; do
+    wait "$pid" || result=1
+done
+
+exit "$result"
