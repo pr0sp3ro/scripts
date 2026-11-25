@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: claude-notify stop|notification
+
+Desktop notification for Claude Code hooks. Reads the hook JSON from stdin.
+stop          Claude finished its turn, low urgency.
+notification  Claude needs a permission or an answer, critical urgency.
+
+Runs only inside tmux, so Claude sessions outside tmux, such as the desktop
+app with its own notifications, stay silent. The title names the tmux session
+and window, without the dirhaven hash suffix.
+EOF
+}
+
+event=${1:-}
+
+case "$event" in
+    stop|notification) ;;
+    *) help; exit 0 ;;
+esac
+
+[[ -n ${TMUX_PANE:-} ]] || exit 0
+
+input=$(cat)
+session=$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null) || exit 0
+window=$(tmux display-message -p -t "$TMUX_PANE" '#W' 2>/dev/null) || exit 0
+
+# dirhaven sessions are named <dir>-<16 hex>; the hash only adds noise here.
+if [[ $session =~ ^(.+)-[0-9a-f]{16}$ ]]; then
+    session=${BASH_REMATCH[1]}
+fi
+
+if [[ $event == stop ]]; then
+    notify-send -u low -a claude "Claude: $session:$window" "Finished, waiting for you."
+    exit 0
+fi
+
+message=$(jq -r '.message // "Needs your attention."' <<<"$input")
+notify-send -u critical -a claude "Claude: $session:$window" "$message"

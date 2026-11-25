@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: ws-down WORKSPACE
+       ws-down --session SESSION
+
+Stop a workspace: its servers, containers and dirhaven tmux session.
+WORKSPACE is a name in ~/src/workspaces or a path to a workspace directory.
+
+ws-down WORKSPACE closes the workspace's tmux session. The tmux
+session-closed hook then runs `ws-down --session`, which runs the
+executable WORKSPACE/down. Without a running session, down runs directly.
+
+--session is for the hook. It runs down only for a session dirhaven created
+for a directory in ~/src/workspaces and appends the output to
+${XDG_STATE_HOME:-~/.local/state}/ws-down.log.
+A failing down sends a desktop notification.
+
+Examples:
+  ws-down automatic
+  ws-down ~/src/workspaces/automatic
+EOF
+}
+
+workspaces="$HOME/src/workspaces"
+log="${XDG_STATE_HOME:-$HOME/.local/state}/ws-down.log"
+
+run_down() {
+    local dir=$1 output_hint=$2
+
+    [[ -x $dir/down ]] || return 0
+    "$dir/down" && return 0
+
+    printf 'Stopping %s failed.\n' "$dir" >&2
+    notify-send -u critical "ws-down failed: $(basename "$dir")" "$output_hint"
+    return 1
+}
+
+session_down() {
+    local session=$1 dir
+
+    dir="$workspaces/${session%-*}"
+    [[ -d $dir ]] || return 0
+    dir=$(cd "$dir" && pwd -P)
+
+    # dirhaven names sessions <basename>-<first 16 hex of sha256(path)>, so this matches one exact directory.
+    [[ $(printf '%s' "$dir" | sha256sum | cut -c1-16) == "${session##*-}" ]] || return 0
+    [[ -x $dir/down ]] || return 0
+
+    mkdir -p "$(dirname "$log")"
+    exec >>"$log" 2>&1
+    printf '\n== %s %s\n' "$(date '+%F %T')" "$session"
+    run_down "$dir" "See $log"
+}
+
+if [[ $# -eq 2 && $1 == --session ]]; then
+    session_down "$2"
+    exit $?
+fi
+
+if [[ $# -ne 1 || $1 == -h || $1 == --help ]]; then
+    help
+    exit 0
+fi
+
+dir=$1
+
+if [[ $dir != */* ]]; then
+    dir="$workspaces/$dir"
+fi
+
+if [[ ! -d $dir ]]; then
+    printf 'Workspace not found: %s\n' "$dir" >&2
+    exit 1
+fi
+
+dir=$(cd "$dir" && pwd -P)
+
+# dirhaven starts the session in the project directory, so match by session path.
+session=$(tmux list-sessions -F '#{session_path} #{session_name}' 2>/dev/null | awk -v dir="$dir" '$1 == dir { print $2; exit }')
+
+if [[ -n $session ]]; then
+    printf 'Closing %s. The session-closed hook stops the workspace, output goes to %s.\n' "$session" "$log"
+    tmux kill-session -t "=$session"
+    exit $?
+fi
+
+run_down "$dir" "Check the output in the terminal."

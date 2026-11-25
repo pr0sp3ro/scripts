@@ -53,12 +53,18 @@ case "$command" in
 esac
 shift
 
-declare -ar REPO_ORDER=(scripts nvim shrd dotfiles)
+declare -ar REPO_ORDER=(scripts nvim shrd dotfiles workspaces nginx unix_bootstrap mnu st-c server-setup)
 declare -Ar REPO_DIRS=(
     [scripts]="$HOME/src/git/scripts"
     [nvim]="$HOME/.config/nvim"
     [shrd]="$HOME/shrd"
     [dotfiles]="$HOME/src/git/dotfiles"
+    [workspaces]="$HOME/src/workspaces"
+    [nginx]="$HOME/src/git/nginx"
+    [unix_bootstrap]="$HOME/src/git/unix_bootstrap"
+    [mnu]="$HOME/src/git/mnu"
+    [st-c]="$HOME/src/git/st-c"
+    [server-setup]="$HOME/src/git/server-setup"
 )
 
 selected=("$@")

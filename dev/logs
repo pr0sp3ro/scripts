@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: logs [DIR]
+
+Open workspace logs in lnav, merged chronologically.
+DIR defaults to ./logs, or inside tmux to logs/ in the session directory,
+which is the dirhaven project path. Directories are loaded recursively,
+so symlinked log directories are included.
+
+Examples:
+  logs
+  logs ~/src/workspaces/automatic/logs
+EOF
+}
+
+if [[ ${1:-} == -h || ${1:-} == --help ]]; then
+    help
+    exit 0
+fi
+
+dir=${1:-}
+
+if [[ -z $dir && -d logs ]]; then
+    dir=logs
+fi
+
+if [[ -z $dir && -n ${TMUX:-} ]]; then
+    # dirhaven creates the session in the first window's directory, the project path by default.
+    dir="$(tmux display-message -p '#{session_path}')/logs"
+fi
+
+if [[ -z $dir || ! -d $dir ]]; then
+    printf 'No logs directory found%s. Pass one as an argument.\n' "${dir:+: $dir}" >&2
+    exit 1
+fi
+
+exec lnav -r "$dir"
