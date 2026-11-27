@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+help() {
+    cat <<'EOF'
+Usage: claude-statusline
+
+Status line for Claude Code. Reads the status JSON from stdin and prints one
+line: account, model, effort, context use, plan limits and git branch.
+
+The account is read from the active config directory (CLAUDE_CONFIG_DIR, or
+~/.claude.json without it), so it shows the account the session really uses,
+whichever alias or tmux window started it.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) help; exit 0 ;;
+esac
+
+input=$(cat)
+
+# Account colors match the tmux window colors: purple for claude, mint for
+# claude-tabon.
+purple=$'\e[1;38;2;195;166;255m'
+mint=$'\e[1;38;2;153;255;228m'
+red=$'\e[1;38;2;255;128;128m'
+grey=$'\e[38;2;160;160;160m'
+reset=$'\e[0m'
+
+config_file=$HOME/.claude.json
+
+if [[ -n ${CLAUDE_CONFIG_DIR:-} ]]; then
+    config_file=$CLAUDE_CONFIG_DIR/.claude.json
+fi
+
+org=$(jq -r '.oauthAccount.organizationName // empty' "$config_file" 2>/dev/null)
+
+case "$org" in
+    Tabon-Reordero) account="${mint}tabon${reset}" ;;
+    *synframe*)     account="${purple}synframe${reset}" ;;
+    "")             account="${red}no account${reset}" ;;
+    *)              account="${red}${org}${reset}" ;;
+esac
+
+# Unit separator instead of tabs: read collapses consecutive tabs, which would
+# shift fields when one of them is empty.
+IFS=$'\x1f' read -r model effort context five_hour seven_day dir < <(
+    jq -r '
+        def pct: if . == null then "" else (round | tostring) end;
+        [
+            .model.display_name // "",
+            .effort.level // "",
+            (.context_window.used_percentage | pct),
+            (.rate_limits.five_hour.used_percentage | pct),
+            (.rate_limits.seven_day.used_percentage | pct),
+            .workspace.current_dir // .cwd // ""
+        ] | join("\u001f")
+    ' <<<"$input"
+)
+
+percent() {
+    local label=$1 value=$2
+
+    [[ -n $value ]] || return 0
+
+    if (( value >= 80 )); then
+        printf '%s%s %s%%%s' "$red" "$label" "$value" "$reset"
+    else
+        printf '%s %s%%' "$label" "$value"
+    fi
+}
+
+parts=("$account")
+
+[[ -n $model ]] && parts+=("$model")
+[[ -n $effort ]] && parts+=("$effort")
+
+for part in "$(percent ctx "$context")" "$(percent 5h "$five_hour")" "$(percent 7d "$seven_day")"; do
+    [[ -n $part ]] && parts+=("$part")
+done
+
+if [[ -n $dir ]]; then
+    branch=$(git -C "$dir" --no-optional-locks branch --show-current 2>/dev/null)
+    [[ -n $branch ]] && parts+=("$branch")
+fi
+
+separator="${grey} · ${reset}"
+line=${parts[0]}
+
+for part in "${parts[@]:1}"; do
+    line+=$separator$part
+done
+
+printf '%s\n' "$line"

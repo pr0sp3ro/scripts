@@ -6,9 +6,12 @@ help() {
     cat <<'EOF'
 Usage: logs [DIR]
 
-Open workspace logs in lnav, merged chronologically.
+Pick workspace logs with fzf and open them in lnav. After lnav exits,
+the picker opens again, Esc in the picker quits.
+Files are listed newest first. Tab marks several files and Ctrl-A marks
+all of them, marked files open merged chronologically.
 DIR defaults to ./logs, or inside tmux to logs/ in the session directory,
-which is the dirhaven project path. Directories are loaded recursively,
+which is the dirhaven project path. Directories are searched recursively,
 so symlinked log directories are included.
 
 Examples:
@@ -38,4 +41,30 @@ if [[ -z $dir || ! -d $dir ]]; then
     exit 1
 fi
 
-exec lnav -r "$dir"
+# Newest first, so today's daily Laravel log is at the top. fzf runs this in its own
+# shell, so the directory is passed through the environment.
+export LOGS_DIR=$dir
+# shellcheck disable=SC2016
+list='find -L "$LOGS_DIR" -type f -not -name ".*" -printf "%T@ %P\n" | sort -rn | cut -d" " -f2-'
+
+while true; do
+    # The picker usually opens with the session, before servers create their logs,
+    # so it reloads periodically. --track with --id-nth keeps the cursor and marks.
+    mapfile -t picked < <(
+        FZF_DEFAULT_COMMAND=$list fzf \
+            --multi \
+            --track \
+            --id-nth .. \
+            --bind "every(5):reload-sync:$list" \
+            --bind 'ctrl-a:select-all' \
+            --bind 'enter:accept-non-empty' \
+            --header 'Enter open, Tab mark, Ctrl-A mark all, Esc quit'
+    )
+
+    if [[ ${#picked[@]} -eq 0 ]]; then
+        exit 0
+    fi
+
+    # Without the pause the next picker would cover lnav's error.
+    lnav "${picked[@]/#/"$dir"/}" || read -rp 'lnav failed, press Enter to return to the picker. '
+done
